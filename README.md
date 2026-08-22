@@ -19,7 +19,8 @@
 graph LR
     Loop["MonoX LoopEngine"] -->|StreamEvent| GW["MultiChannelGateway"]
     GW -->|ws| Ch["MonoDeskChannel<br/>(ws server :8766)"]
-    Ch <-->|ws :8766| Desk["MonoDesk"]
+    Ch -->|ws :8766| Desk
+    Desk -->|ws :8766| Ch["MonoDesk"]
     Desk --> WS["ws/<br/>protocol + client"]
     WS --> Bus["event bus"]
     Bus --> Engine["stream/<br/>rAF 合并写 DOM"]

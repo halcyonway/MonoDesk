@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MonoDesk — preview</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-panel: #f7f7f5;
+    --bg-hover: #f1f1ef;
+    --bg-code: #f6f6f4;
+    --border: #ececea;
+    --border-strong: #dcdcd9;
+    --text: #1b1b1f;
+    --text-muted: #6b6b74;
+    --text-faint: #9c9ca4;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, 0.08);
+    --thinking: #b45309;
+    --thinking-bg: rgba(180, 83, 9, 0.06);
+    --tool: #0369a1;
+    --tool-bg: rgba(3, 105, 161, 0.05);
+    --ok: #16a34a;
+    --error: #dc2626;
+    --caret: #4f46e5;
+    --shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  html[data-theme="dark"] {
+    --bg: #0f0f12;
+    --bg-panel: #16161a;
+    --bg-hover: #1e1e24;
+    --bg-code: #17171c;
+    --border: #222228;
+    --border-strong: #2e2e36;
+    --text: #e7e7ea;
+    --text-muted: #9a9aa3;
+    --text-faint: #6b6b74;
+    --accent: #818cf8;
+    --accent-soft: rgba(129, 140, 248, 0.10);
+    --thinking: #f0a34a;
+    --thinking-bg: rgba(240, 163, 74, 0.08);
+    --tool: #4ab3e6;
+    --tool-bg: rgba(74, 179, 230, 0.07);
+    --ok: #4ade80;
+    --error: #f87171;
+    --caret: #818cf8;
+    --shadow: 0 1px 2px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace; }
+
+  #app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* ---------- rail ---------- */
+  #rail {
+    width: 52px; flex: none;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 14px 0;
+  }
+  #rail .logo {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: var(--accent); color: #fff;
+    display: grid; place-items: center;
+    font-family: ui-monospace, monospace; font-weight: 700; font-size: 13px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
+  }
+  #rail .sep { flex: 1; }
+  .rail-btn {
+    width: 34px; height: 34px; border-radius: 8px;
+    display: grid; place-items: center;
+    color: var(--text-muted); cursor: pointer; margin: 2px 0;
+    border: none; background: transparent;
+    transition: color .12s, background .12s;
+  }
+  .rail-btn:hover { color: var(--text); background: var(--bg-hover); }
+  .rail-btn.active { color: var(--accent); background: var(--accent-soft); }
+  .rail-btn svg { width: 17px; height: 17px; }
+
+  /* ---------- main column ---------- */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  #topbar {
+    height: 46px; flex: none;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  #topbar .wordmark { font-weight: 650; font-size: 14px; letter-spacing: -.01em; }
+  #topbar .wordmark .x { color: var(--text-faint); font-weight: 500; }
+  #topbar .session {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    color: var(--text-muted); background: var(--bg-panel);
+    padding: 3px 9px; border-radius: 6px; border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 6px;
+  }
+  #topbar .spacer { flex: 1; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--text-muted);
+    padding: 4px 11px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg);
+  }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+  .pill.thinking .dot { background: var(--thinking); animation: pulse 1.1s ease-in-out infinite; }
+  .pill.tooling .dot { background: var(--tool); animation: pulse 1.1s ease-in-out infinite; }
+  .pill.error .dot { background: var(--error); }
+  .pill.idle .dot, .pill.wait_io .dot { background: var(--text-faint); }
+  @keyframes pulse { 0%,100%{opacity:1; transform:scale(1)} 50%{opacity:.35; transform:scale(.8)} }
+
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 7px;
+    display: grid; place-items: center; cursor: pointer;
+    color: var(--text-faint); border: none; background: transparent;
+    transition: color .12s, background .12s;
+  }
+  .icon-btn:hover { color: var(--text); background: var(--bg-hover); }
+  .icon-btn svg { width: 16px; height: 16px; }
+
+  /* ---------- body ---------- */
+  #body { flex: 1; display: flex; min-height: 0; }
+
+  #conversation { flex: 1; overflow-y: auto; }
+  .col { max-width: 760px; margin: 0 auto; padding: 36px 40px 40px; }
+
+  .msg { margin-bottom: 26px; }
+  .msg .label {
+    font-size: 11.5px; font-weight: 600; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px;
+  }
+  .msg.user .label { color: var(--accent); }
+  .msg.user .text { color: var(--text); font-weight: 500; }
+
+  .stream { color: var(--text); }
+  .stream > * { margin: 0 0 12px; }
+  .stream > *:last-child { margin-bottom: 0; }
+  .stream p { margin: 0 0 12px; }
+  .stream p:last-child { margin-bottom: 0; }
+  .stream h1, .stream h2, .stream h3 { font-size: 15px; font-weight: 650; margin: 20px 0 8px; line-height: 1.4; }
+  .stream h1:first-child, .stream h2:first-child, .stream h3:first-child { margin-top: 0; }
+  .stream ul { margin: 0 0 12px; padding-left: 20px; }
+  .stream li { margin: 3px 0; }
+  .stream blockquote { margin: 0 0 12px; padding-left: 14px; border-left: 2px solid var(--border-strong); color: var(--text-muted); }
+  .stream code {
+    font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    font-size: 12.5px; background: var(--bg-code); padding: 1px 5px;
+    border-radius: 4px; border: 1px solid var(--border);
+  }
+  .stream a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+  .stream strong { font-weight: 650; }
+  .stream em { font-style: italic; }
+
+  .caret {
+    display: inline-block; width: 8px; height: 15px;
+    background: var(--caret); border-radius: 1px;
+    margin-left: 1px; vertical-align: -2px;
+    animation: blink 1s steps(2, start) infinite;
+  }
+  @keyframes blink { to { visibility: hidden; } }
+
+  /* code block */
+  .codeblock {
+    margin: 0 0 14px; border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; background: var(--bg-code);
+  }
+  .codeblock-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 12px; font-size: 11px; color: var(--text-faint);
+    background: var(--bg-panel); border-bottom: 1px solid var(--border);
+    font-family: ui-monospace, monospace;
+  }
+  .codeblock-head .copy { cursor: pointer; }
+  .codeblock-head .copy:hover { color: var(--text); }
+  .codeblock pre { margin: 0; padding: 12px 14px; overflow-x: auto; }
+  .codeblock code { background: transparent; border: none; padding: 0; font-size: 12.5px; line-height: 1.55; }
+
+  /* reasoning block */
+  .block {
+    margin: 0 0 12px; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border); background: var(--bg-panel);
+    font-size: 13px;
+  }
+  .block .bhead {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; cursor: pointer; user-select: none;
+    color: var(--text-muted);
+  }
+  .block .bhead:hover { background: var(--bg-hover); }
+  .block .bhead .tri { font-size: 9px; color: var(--text-faint); transition: transform .12s; }
+  .block.open .bhead .tri { transform: rotate(90deg); }
+  .block .bhead .ico { width: 13px; height: 13px; flex: none; }
+  .block .bhead .name { font-weight: 600; color: var(--text); font-family: ui-monospace, monospace; font-size: 12.5px; }
+  .block .bhead .meta { font-size: 11px; color: var(--text-faint); font-family: ui-monospace, monospace; }
+  .block .bhead .spacer { flex: 1; }
+  .block .bhead .latency { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint); }
+
+  .block.reasoning { border-left: 2px solid var(--thinking); }
+  .block.reasoning .bhead .ico { color: var(--thinking); }
+  .block.reasoning .bbody {
+    padding: 2px 14px 12px; color: var(--text-muted); font-style: italic;
+    border-top: 1px solid var(--border); white-space: pre-wrap; word-break: break-word;
+    max-height: 260px; overflow-y: auto;
+  }
+
+  .block.tool { border-left: 2px solid var(--tool); }
+  .block.tool .bhead .ico { color: var(--tool); }
+  .block.tool .bbody {
+    border-top: 1px solid var(--border); font-size: 12.5px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--text-muted); white-space: pre-wrap; word-break: break-word;
+    padding: 10px 14px; max-height: 300px; overflow-y: auto;
+  }
+  .block .bbody { display: none; }
+  .block.open .bbody { display: block; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: ui-monospace, monospace; font-size: 11px; font-weight: 600;
+    padding: 1px 7px; border-radius: 5px;
+  }
+  .badge.ok { color: var(--ok); background: rgba(22,163,74,.08); }
+  .badge.err { color: var(--error); background: rgba(220,38,38,.08); }
+  .badge.wait { color: var(--text-faint); background: var(--bg-hover); }
+
+  /* metric footnote */
+  .metric-note {
+    font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint);
+    margin: 2px 0 14px;
+  }
+  .error-block {
+    color: var(--error); font-size: 13px; padding: 10px 12px;
+    border: 1px solid var(--border); border-left: 2px solid var(--error);
+    border-radius: 8px; margin-bottom: 12px; background: var(--bg-panel);
+  }
+
+  /* ---------- monitor ---------- */
+  #monitor {
+    width: 296px; flex: none; overflow-y: auto;
+    border-left: 1px solid var(--border); background: var(--bg-panel);
+    padding: 18px 16px; font-size: 12.5px;
+    transition: width .18s ease, opacity .18s ease;
+  }
+  #monitor.hidden { width: 0; padding: 0; opacity: 0; overflow: hidden; border-left: none; }
+  #monitor h4 {
+    font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--text-faint); margin: 20px 0 10px;
+  }
+  #monitor h4:first-child { margin-top: 0; }
+  .m-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; }
+  .m-row .k { color: var(--text-muted); }
+  .m-row .v { font-family: ui-monospace, monospace; color: var(--text); }
+  .m-big {
+    font-family: ui-monospace, monospace; font-size: 30px; font-weight: 650;
+    letter-spacing: -.02em; line-height: 1; margin: 4px 0 2px;
+  }
+  .m-big .unit { font-size: 13px; color: var(--text-faint); font-weight: 500; margin-left: 3px; }
+  .m-hint { font-size: 11px; color: var(--text-faint); margin-top: 1px; }
+  #steps { display: flex; flex-direction: column; gap: 5px; }
+  .step-row {
+    display: flex; gap: 8px; align-items: center; font-family: ui-monospace, monospace;
+    font-size: 11.5px; color: var(--text-muted);
+    padding: 5px 8px; border-radius: 6px; background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .step-row .idx { color: var(--text-faint); }
+  .step-row .lat { color: var(--text); font-weight: 600; }
+  .step-row .gap { flex: 1; }
+
+  /* ---------- composer ---------- */
+  #composer-wrap {
+    flex: none; padding: 12px 20px 10px; border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .composer-col { max-width: 760px; margin: 0 auto; }
+
+  .suggestions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .sug-label { font-size: 11px; color: var(--text-faint); margin-right: 2px; }
+  .sug {
+    font-size: 12px; color: var(--text-muted); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; cursor: pointer;
+    transition: color .12s, border-color .12s, background .12s;
+  }
+  .sug:hover { color: var(--text); border-color: var(--border-strong); background: var(--bg-hover); }
+
+  #composer {
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-strong); border-radius: 14px;
+    background: var(--bg);
+    box-shadow: 0 1px 2px rgba(0,0,0,.05), 0 6px 18px -10px rgba(0,0,0,.12);
+    transition: border-color .12s, box-shadow .12s;
+  }
+  html[data-theme="dark"] #composer {
+    box-shadow: 0 1px 2px rgba(0,0,0,.5), 0 10px 28px -16px rgba(0,0,0,.7);
+  }
+  #composer:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft), 0 6px 18px -10px rgba(0,0,0,.12);
+  }
+
+  .composer-main { padding: 12px 16px 6px; }
+  #input {
+    width: 100%; border: none; outline: none; resize: none; display: block;
+    font-family: inherit; font-size: 14px; line-height: 1.55; color: var(--text);
+    background: transparent; max-height: 160px; padding: 0;
+  }
+  #input::placeholder { color: var(--text-faint); }
+
+  .composer-foot {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px 8px 12px; border-top: 1px solid var(--border);
+  }
+  .foot-left { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; }
+  .chip-model {
+    display: inline-flex; align-items: center; gap: 5px; flex: none;
+    font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text-muted);
+    background: var(--bg-panel); border: 1px solid var(--border); border-radius: 7px;
+    padding: 3px 8px; cursor: pointer; transition: color .12s, border-color .12s;
+  }
+  .chip-model:hover { color: var(--text); border-color: var(--border-strong); }
+  .chip-model svg { width: 11px; height: 11px; color: var(--text-faint); }
+
+  .foot-right { display: flex; align-items: center; gap: 10px; flex: none; }
+  #composer-status { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+  #composer-status.running { color: var(--thinking); }
+  #composer-status.running .dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--thinking); margin-right: 6px; animation: pulse 1.1s ease-in-out infinite;
+  }
+
+  #send {
+    border: none; border-radius: 9px; width: 30px; height: 30px; flex: none;
+    display: grid; place-items: center; cursor: pointer;
+    background: var(--accent); color: #fff;
+    transition: opacity .12s, transform .06s, background .12s;
+  }
+  #send:hover { opacity: .88; }
+  #send:active { transform: scale(.95); }
+  #send:disabled { opacity: .35; cursor: default; }
+  #send svg { width: 14px; height: 14px; }
+  #send.stop { background: var(--text-muted); }
+
+  #composer-hint { margin: 7px 2px 0; font-size: 11px; color: var(--text-faint); display: flex; justify-content: space-between; }
+
+  /* ---------- statusbar ---------- */
+  #statusbar {
+    height: 26px; flex: none; display: flex; align-items: center; gap: 14px;
+    padding: 0 20px; border-top: 1px solid var(--border);
+    font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint);
+    background: var(--bg-panel);
+  }
+  #statusbar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  #statusbar .sep { width: 1px; height: 12px; background: var(--border-strong); }
+
+  @media (max-width: 920px) { #monitor { display: none; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="rail">
+    <div class="logo">MD</div>
+    <button class="rail-btn active" title="会话" onclick="setActiveRail(this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    </button>
+    <button class="rail-btn" title="历史" onclick="setActiveRail(this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    </button>
+    <button class="rail-btn" title="记忆" onclick="setActiveRail(this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+    </button>
+    <div class="sep"></div>
+    <button class="rail-btn" title="设置" onclick="setActiveRail(this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+    </button>
+  </aside>
+
+  <div id="main">
+    <header id="topbar">
+      <span class="wordmark">MonoDesk<span class="x"> / MonoX</span></span>
+      <span class="session"><span class="dot" style="width:6px;height:6px;border-radius:50%;background:var(--ok)"></span>default</span>
+      <div class="spacer"></div>
+      <span class="pill idle" id="pill"><span class="dot"></span><span id="pill-text">idle</span></span>
+      <button class="icon-btn" id="monitor-toggle" title="折叠遥测" onclick="toggleMonitor()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      </button>
+      <button class="icon-btn" title="重播 demo" onclick="replay()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+      </button>
+      <button class="icon-btn" title="切换主题" onclick="toggleTheme()">
+        <svg id="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+    </header>
+
+    <div id="body">
+      <section id="conversation">
+        <div class="col" id="msgs"></div>
+      </section>
+
+      <aside id="monitor">
+        <h4>现在</h4>
+        <div class="m-row"><span class="k">状态</span><span class="v" id="m-state">idle</span></div>
+        <div class="m-row"><span class="k">模型</span><span class="v" id="m-model">gpt-4</span></div>
+        <div class="m-row"><span class="k">会话</span><span class="v" id="m-session">default</span></div>
+
+        <h4>延迟</h4>
+        <div class="m-big" id="m-ttft">—<span class="unit">ms</span></div>
+        <div class="m-hint" id="m-ttft-hint">首 token 到达时间（TTFT）</div>
+        <div class="m-row" style="margin-top:10px"><span class="k">总耗时</span><span class="v" id="m-total">—</span></div>
+
+        <h4>吞吐</h4>
+        <div class="m-row"><span class="k">tokens / s</span><span class="v" id="m-tps">—</span></div>
+        <div class="m-row"><span class="k">prompt</span><span class="v" id="m-prompt">—</span></div>
+        <div class="m-row"><span class="k">completion</span><span class="v" id="m-completion">—</span></div>
+
+        <h4>步骤</h4>
+        <div id="steps"></div>
+      </aside>
+    </div>
+
+    <footer id="composer-wrap">
+      <div class="composer-col">
+        <div class="suggestions" id="suggestions">
+          <span class="sug-label">试试</span>
+          <button class="sug" onclick="useSuggestion('看下 MonoX 的 channel 协议长什么样')">看下 channel 协议</button>
+          <button class="sug" onclick="useSuggestion('帮 MonoX 加一个 WebSocket channel')">加一个 WebSocket channel</button>
+          <button class="sug" onclick="useSuggestion('memory 存在哪')">memory 存在哪</button>
+        </div>
+        <div id="composer">
+          <div class="composer-main">
+            <textarea id="input" rows="1" placeholder="Message MonoX…"></textarea>
+          </div>
+          <div class="composer-foot">
+            <div class="foot-left">
+              <button class="chip-model">gpt-4
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+            <div class="foot-right">
+              <span id="composer-status"></span>
+              <button id="send" title="发送" onclick="send()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="composer-hint">
+          <span>Enter 发送 · ⇧Enter 换行</span>
+          <span>演示模式 · mock 事件流</span>
+        </div>
+      </div>
+    </footer>
+
+    <div id="statusbar">
+      <span style="display:flex;align-items:center;gap:6px"><span class="dot"></span>connected</span>
+      <span class="sep"></span>
+      <span>ws://127.0.0.1:8765</span>
+      <span class="sep"></span>
+      <span id="sb-model">model gpt-4</span>
+      <span class="sep"></span>
+      <span id="sb-session">session default</span>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ================= helpers ================= */
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const now = () => performance.now();
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const fmtMs = (ms) => ms < 1000 ? Math.round(ms) + "ms" : (ms / 1000).toFixed(1) + "s";
+const CARET = '<span class="caret"></span>';
+
+/* ================= markdown (lite) ================= */
+function inline(s) {
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return "@@c" + (codes.length - 1) + "@@"; });
+  s = esc(s);
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  s = s.replace(/@@c(\d+)@@/g, (m, i) => '<code>' + esc(codes[+i]) + '</code>');
+  return s;
+}
+function codeBlock(code, lang) {
+  return '<div class="codeblock">' +
+    '<div class="codeblock-head"><span>' + esc(lang || "text") + '</span>' +
+    '<span class="copy" onclick="copyCode(this)">copy</span></div>' +
+    '<pre><code>' + esc(code) + '</code></pre></div>';
+}
+function renderMarkdown(src) {
+  const lines = src.split("\n");
+  let out = "", i = 0, inCode = false, buf = [], lang = "";
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().startsWith("```")) {
+      if (!inCode) { inCode = true; lang = line.trim().slice(3).trim(); buf = []; }
+      else { out += codeBlock(buf.join("\n"), lang); inCode = false; }
+      i++; continue;
+    }
+    if (inCode) { buf.push(line); i++; continue; }
+    const t = line.trim();
+    if (t === "") { out += "<p></p>"; }
+    else if (/^#{1,3}\s/.test(t)) { const m = t.match(/^(#{1,3})\s+(.*)/); out += "<h" + m[1].length + ">" + inline(m[2]) + "</h" + m[1].length + ">"; }
+    else if (/^[-*]\s+/.test(t)) { out += "<ul><li>" + inline(t.replace(/^[-*]\s+/, "")) + "</li></ul>"; }
+    else if (t.startsWith("> ")) { out += "<blockquote>" + inline(t.slice(2)) + "</blockquote>"; }
+    else { out += "<p>" + inline(line) + "</p>"; }
+    i++;
+  }
+  if (inCode) out += codeBlock(buf.join("\n"), lang);
+  return out;
+}
+function copyCode(el) {
+  const code = el.closest(".codeblock").querySelector("code").innerText;
+  navigator.clipboard?.writeText(code);
+  const o = el.innerText; el.innerText = "copied"; setTimeout(() => el.innerText = o, 900);
+}
+
+/* ================= streaming render state ================= */
+let turn = null;        // current assistant message wrapper
+let textEl = null;      // current streaming text block
+let textRaw = "";
+let reasoningEl = null; // current reasoning block
+let reasoningRaw = "";
+let reasoningStart = 0;
+let curTool = null;     // current tool block
+let rafPending = false;
+let userSendTime = 0;
+let firstTokenAt = 0;
+let tokenCount = 0;
+let streaming = false;
+
+function msgs() { return $("msgs"); }
+
+function newTurn() {
+  turn = document.createElement("div");
+  turn.className = "msg assistant";
+  turn.innerHTML = '<div class="label">Agent</div><div class="stream"></div>';
+  msgs().appendChild(turn);
+  return turn.querySelector(".stream");
+}
+function newUser(text) {
+  const m = document.createElement("div");
+  m.className = "msg user";
+  m.innerHTML = '<div class="label">You</div><div class="text"></div>';
+  m.querySelector(".text").textContent = text;
+  msgs().appendChild(m);
+}
+
+function scheduleRepaint() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    if (textEl) paintText();
+    if (reasoningEl) {
+      reasoningEl.body.innerHTML = esc(reasoningRaw) + CARET;
+      const dur = (now() - reasoningStart);
+      reasoningEl.head.querySelector(".meta").textContent =
+        reasoningRaw.length + " chars · " + fmtMs(dur);
+    }
+    scrollBottom();
+  });
+}
+function paintText() {
+  if (!textEl) return;
+  textEl.innerHTML = renderMarkdown(textRaw);
+  if (!streaming) return;
+  // 让光标紧贴最后字符，而不是落到块元素之后（打字机观感）
+  let host = textEl.lastElementChild;
+  if (host && host.classList.contains("codeblock")) host = host.querySelector("code") || host;
+  if (!host) host = textEl;
+  const c = document.createElement("span");
+  c.className = "caret";
+  host.appendChild(c);
+}
+function scrollBottom() {
+  const c = $("conversation");
+  if (c) c.scrollTop = c.scrollHeight;
+}
+
+/* freeze text block: remove caret, stop writing into it */
+function freezeText() {
+  if (textEl) {
+    textEl.innerHTML = renderMarkdown(textRaw);
+    textEl = null; textRaw = "";
+  }
+  streaming = false;
+}
+function freezeReasoning() {
+  if (reasoningEl) {
+    reasoningEl.body.innerHTML = esc(reasoningRaw);
+    if (reasoningRaw.length > 60) reasoningEl.close();
+    reasoningEl = null; reasoningRaw = "";
+  }
+}
+
+/* ---------- reasoning block ---------- */
+function startReasoning() {
+  freezeText();
+  const stream = turn ? turn.querySelector(".stream") : newTurn();
+  reasoningEl = document.createElement("div");
+  reasoningEl.className = "block reasoning open";
+  reasoningEl.innerHTML =
+    '<div class="bhead"><span class="tri">▸</span>' +
+    '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10a7 7 0 0 1-14 0"/><line x1="12" y1="17" x2="12" y2="21"/></svg>' +
+    '<span class="name">thinking</span>' +
+    '<span class="meta">0 chars</span>' +
+    '<span class="spacer"></span><span class="latency"></span></div>' +
+    '<div class="bbody"></div>';
+  stream.appendChild(reasoningEl);
+  reasoningEl.head = reasoningEl.querySelector(".bhead");
+  reasoningEl.body = reasoningEl.querySelector(".bbody");
+  reasoningEl.close = () => { reasoningEl.classList.remove("open"); };
+  reasoningEl.head.onclick = () => reasoningEl.classList.toggle("open");
+  reasoningStart = now();
+}
+
+/* ---------- tool block ---------- */
+function startTool(name, args) {
+  freezeText(); freezeReasoning();
+  const stream = turn ? turn.querySelector(".stream") : newTurn();
+  const t = document.createElement("div");
+  t.className = "block tool open";
+  const argsStr = Object.entries(args || {}).map(([k, v]) => k + "=" + JSON.stringify(v)).join(" ");
+  t.innerHTML =
+    '<div class="bhead"><span class="tri">▸</span>' +
+    '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="14.5 6.5 18 3 21.5 6.5 18 10 14.5 6.5"/><line x1="18" y1="3" x2="18" y2="13"/><line x1="3" y1="13" x2="3" y2="21"/><line x1="8" y1="13" x2="8" y2="21"/><line x1="13" y1="13" x2="13" y2="21"/><line x1="3" y1="16" x2="3" y2="16"/></svg>' +
+    '<span class="name">' + esc(name) + '</span>' +
+    '<span class="meta">' + esc(truncate(argsStr, 40)) + '</span>' +
+    '<span class="spacer"></span><span class="latency"></span></div>' +
+    '<div class="bbody"></div>';
+  stream.appendChild(t);
+  t.head = t.querySelector(".bhead");
+  t.body = t.querySelector(".bbody");
+  t.lat = t.querySelector(".latency");
+  t.head.onclick = () => t.classList.toggle("open");
+  t.t0 = now();
+  t.timer = setInterval(() => { t.lat.textContent = fmtMs(now() - t.t0); }, 100);
+  curTool = t;
+}
+function endTool(result, latencyMs) {
+  if (!curTool) return;
+  const t = curTool; curTool = null;
+  clearInterval(t.timer);
+  t.lat.textContent = fmtMs(latencyMs);
+  const out = result.stdout || "";
+  const truncated = result.truncated || out.length > 2000;
+  const shown = out.slice(0, 2000);
+  const badge = result.status === "ok" && result.exit_code === 0
+    ? '<span class="badge ok">✓ exit 0</span>'
+    : '<span class="badge err">✕ exit ' + result.exit_code + '</span>';
+  const err = result.stderr ? "\n" + result.stderr : "";
+  t.body.innerHTML = (shown ? esc(shown) : "<span style='color:var(--text-faint)'>no output</span>") +
+    (truncated ? "\n<span style='color:var(--text-faint)'>… (" + (out.length - 2000) + " more)</span>" : "") +
+    esc(err) + "\n" + badge;
+}
+function truncate(s, n) { return s.length > n ? s.slice(0, n) + "…" : s; }
+
+/* ---------- metric note + monitor ---------- */
+function addMetricNote(m) {
+  freezeText();
+  const stream = turn ? turn.querySelector(".stream") : newTurn();
+  const d = document.createElement("div");
+  d.className = "metric-note";
+  const tok = m.tokens || {};
+  d.textContent = "step " + m.step_idx + " · " + fmtMs(m.latency_ms) + " · " +
+    (tok.completion_tokens ?? "?") + " tok · " + (m.tool_calls_count || 0) + " tool";
+  stream.appendChild(d);
+}
+function addStep(m) {
+  const tok = m.tokens || {};
+  const row = document.createElement("div");
+  row.className = "step-row";
+  row.innerHTML = '<span class="idx">#' + m.step_idx + '</span>' +
+    '<span class="lat">' + fmtMs(m.latency_ms) + '</span>' +
+    '<span class="gap"></span>' +
+    '<span>' + (tok.completion_tokens ?? "?") + ' tok</span>' +
+    '<span>' + (m.tool_calls_count || 0) + ' tool</span>';
+  $("steps").appendChild(row);
+  if (tok.prompt_tokens != null) $("m-prompt").textContent = tok.prompt_tokens;
+  if (tok.completion_tokens != null) $("m-completion").textContent = tok.completion_tokens;
+}
+
+/* ================= status pill ================= */
+let running = false;
+let hasStarted = false;
+let runId = 0;
+let statusInterval = null;
+const SEND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
+function setStatus(state) {
+  const pill = $("pill"), text = $("pill-text");
+  pill.className = "pill " + state;
+  text.textContent = state.replace("_", " ");
+  $("m-state").textContent = state.replace("_", " ");
+  running = (state === "thinking" || state === "tooling");
+  updateComposerStatus(state);
+}
+
+function updateComposerStatus(state) {
+  const el = $("composer-status");
+  const btn = $("send");
+  btn.innerHTML = running ? STOP_ICON : SEND_ICON;
+  btn.classList.toggle("stop", running);
+  btn.title = running ? "停止" : "发送";
+  if (running) {
+    el.classList.add("running");
+    el.dataset.state = state;
+    if (!statusInterval) {
+      statusInterval = setInterval(() => {
+        const e2 = $("composer-status");
+        e2.innerHTML = '<span class="dot"></span>' + e2.dataset.state + " · " + fmtMs(now() - userSendTime);
+      }, 200);
+    }
+  } else {
+    el.classList.remove("running");
+    if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+    el.textContent = "";
+  }
+  refreshSendState();
+}
+
+/* ================= dispatcher ================= */
+function dispatch(ev) {
+  switch (ev.type) {
+    case "hello":
+      $("m-model").textContent = $("sb-model").textContent = "model " + ev.data.model;
+      $("m-session").textContent = ev.data.session_key;
+      break;
+
+    case "status":
+      setStatus(ev.data.state);
+      if (ev.data.state === "thinking") {
+        if (!turn) newTurn();
+      } else if (ev.data.state !== "wait_io") {
+        freezeText(); freezeReasoning();
+      }
+      break;
+
+    case "reasoning":
+      if (!turn) newTurn();
+      if (!reasoningEl) startReasoning();
+      reasoningRaw += ev.data.text;
+      scheduleRepaint();
+      break;
+
+    case "token":
+      if (!turn) newTurn();
+      if (!textEl) {
+        freezeReasoning();
+        const stream = turn.querySelector(".stream");
+        textEl = document.createElement("div");
+        textEl.className = "stream";
+        stream.appendChild(textEl);
+        streaming = true;
+      }
+      if (firstTokenAt === 0) {
+        firstTokenAt = now();
+        const ttft = firstTokenAt - userSendTime;
+        $("m-ttft").innerHTML = Math.round(ttft) + '<span class="unit">ms</span>';
+        $("m-ttft-hint").textContent = "TTFT · 首 token 到达";
+      }
+      textRaw += ev.data.text;
+      tokenCount += ev.data.text.length;
+      const elapsed = (now() - firstTokenAt) / 1000;
+      if (elapsed > 0) $("m-tps").textContent = Math.round(tokenCount / elapsed);
+      scheduleRepaint();
+      break;
+
+    case "tool_start":
+      if (!turn) newTurn();
+      startTool(ev.data.name, ev.data.args);
+      break;
+
+    case "tool_end":
+      endTool(ev.data.result, ev.data.latency_ms);
+      break;
+
+    case "metric":
+      addMetricNote(ev.data.metrics);
+      addStep(ev.data.metrics);
+      break;
+
+    case "final":
+      freezeText(); freezeReasoning();
+      if (turn) {
+        const stream = turn.querySelector(".stream");
+        const f = document.createElement("div");
+        f.className = "metric-note";
+        const mm = ev.data.metrics || {};
+        f.textContent = "done · " + (mm.total_tool_calls || 0) + " tool · " + fmtMs(mm.total_latency_ms || 0);
+        stream.appendChild(f);
+      }
+      const total = now() - userSendTime;
+      $("m-total").textContent = fmtMs(total);
+      streaming = false;
+      break;
+
+    case "card":
+      freezeText();
+      if (!turn) newTurn();
+      const card = document.createElement("div");
+      card.className = "codeblock";
+      card.innerHTML = '<pre><code>' + esc(JSON.stringify(ev.data.data, null, 2)) + '</code></pre>';
+      turn.querySelector(".stream").appendChild(card);
+      break;
+
+    case "error":
+      freezeText(); freezeReasoning();
+      if (!turn) newTurn();
+      const e = document.createElement("div");
+      e.className = "error-block";
+      e.textContent = "❌ " + ev.data.code + " — " + ev.data.msg;
+      turn.querySelector(".stream").appendChild(e);
+      setStatus("error");
+      break;
+  }
+}
+
+/* ================= demo scripts ================= */
+async function emit(ev, delay, id) { await sleep(delay); if (id !== runId) return; dispatch(ev); }
+
+const CHANNEL_CODE =
+"class Channel(Protocol):\n" +
+"    async def start(self) -> None: ...\n" +
+"    async def stop(self) -> None: ...\n" +
+"    def listen(self) -> AsyncIterator[InboundEvent]: ...\n" +
+"    async def send(self, event: StreamEvent) -> None: ...";
+
+async function playFullDemo() {
+  const id = startTurn("帮我在 MonoX 里加一个 WebSocket channel，让桌面端 MonoDesk 能接进来。");
+  const e = (ev, d) => emit(ev, d, id);
+
+  await e({ type: "status", data: { state: "thinking" } }, 220);
+  await e({ type: "reasoning", data: { text: "让我先看看 core/channel/base.py 里 Channel 协议长什么样。" } }, 260);
+  await e({ type: "reasoning", data: { text: "\nChannel 只有 4 个方法：start / stop / listen / send。" } }, 180);
+  await e({ type: "reasoning", data: { text: "\n出站是 9 个 StreamEvent 的 union。飞书 channel 已经用 WebSocket 入站，可以照搬它的线程模型。" } }, 200);
+
+  await e({ type: "status", data: { state: "tooling" } }, 120);
+  await e({ type: "tool_start", data: { name: "bash", args: { command: "ls extensions/channels && wc -l core/channel/base.py" } } }, 160);
+  await e({ type: "tool_end", data: { latency_ms: 214, result: {
+    call_id: "call_1", status: "ok",
+    stdout: "feishu.py\nmonodesk.py\nterminal.py\ntextual_chat.py\n    19 core/channel/base.py",
+    stderr: "", exit_code: 0, truncated: false, budget_id: null
+  } } }, 380);
+  await e({ type: "metric", data: { metrics: { step_idx: 1, latency_ms: 812, tokens: { prompt_tokens: 1204, completion_tokens: 86 }, tool_calls_count: 1 } } }, 80);
+
+  await e({ type: "status", data: { state: "thinking" } }, 120);
+  await e({ type: "token", data: { text: "好的。MonoX 的 channel 抽象已经很干净，" } }, 140);
+  await e({ type: "token", data: { text: "MonoDesk 只需要实现这个协议并做 JSON 序列化：" } }, 120);
+  await e({ type: "token", data: { text: "\n```python\n" + CHANNEL_CODE + "\n```" } }, 160);
+  await e({ type: "token", data: { text: "\n入站把桌面输入映射成 `InboundEvent`，出站把 `StreamEvent` 逐条转成 JSON 帧推给前端。" } }, 160);
+  await e({ type: "token", data: { text: " 关键是**别每 token 触发一次重渲染**，用 rAF 合并成 ~60fps，TTFT 才会稳。" } }, 140);
+
+  await e({ type: "status", data: { state: "tooling" } }, 100);
+  await e({ type: "tool_start", data: { name: "bash", args: { command: "cat > extensions/channels/monodesk.py <<'EOF'\n..." } } }, 140);
+  await e({ type: "tool_end", data: { latency_ms: 96, result: {
+    call_id: "call_2", status: "ok",
+    stdout: "wrote 132 lines", stderr: "", exit_code: 0, truncated: false, budget_id: null
+  } } }, 300);
+  await e({ type: "metric", data: { metrics: { step_idx: 2, latency_ms: 640, tokens: { prompt_tokens: 1340, completion_tokens: 54 }, tool_calls_count: 1 } } }, 80);
+
+  await e({ type: "final", data: { text: "done", metrics: { steps: 2, total_latency_ms: 1452, total_tool_calls: 2 } } }, 60);
+  await e({ type: "status", data: { state: "wait_io" } }, 80);
+}
+
+async function genericBody(id, e) {
+  await e({ type: "status", data: { state: "thinking" } }, 180);
+  await e({ type: "token", data: { text: "收到。演示模式，这里会被真实的 MonoX 流式输出替换。" } }, 240);
+  await e({ type: "final", data: { text: "done", metrics: { steps: 1, total_latency_ms: 420, total_tool_calls: 0 } } }, 60);
+  await e({ type: "status", data: { state: "wait_io" } }, 80);
+}
+
+function resetRun() {
+  msgs().innerHTML = "";
+  $("steps").innerHTML = "";
+  $("m-ttft").innerHTML = '—<span class="unit">ms</span>';
+  $("m-ttft-hint").textContent = "首 token 到达时间（TTFT）";
+  $("m-total").textContent = "—";
+  $("m-tps").textContent = "—";
+  $("m-prompt").textContent = "—";
+  $("m-completion").textContent = "—";
+  turn = textEl = reasoningEl = curTool = null;
+  textRaw = reasoningRaw = "";
+  streaming = false; firstTokenAt = 0; tokenCount = 0;
+}
+
+/* ================= topbar actions ================= */
+function setActiveRail(btn) {
+  document.querySelectorAll(".rail-btn").forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+}
+function toggleTheme() {
+  const h = document.documentElement;
+  h.dataset.theme = h.dataset.theme === "dark" ? "light" : "dark";
+}
+function toggleMonitor() {
+  $("monitor").classList.toggle("hidden");
+}
+function replay() { playFullDemo(); }
+
+/* ================= composer ================= */
+function refreshSendState() {
+  $("send").disabled = !running && !$("input").value.trim();
+}
+function startTurn(userText) {
+  const id = ++runId;
+  resetRun();
+  newUser(userText);
+  userSendTime = now();
+  streaming = true;
+  hasStarted = true;
+  $("suggestions").style.display = "none";
+  setStatus("thinking");
+  return id;
+}
+function stopRun() {
+  runId++;            // 使在途 emit 失效
+  streaming = false;
+  freezeText(); freezeReasoning();
+  setStatus("idle");
+}
+function useSuggestion(text) { runUserTurn(text); }
+function runUserTurn(text) {
+  const id = startTurn(text);
+  genericBody(id, (ev, d) => emit(ev, d, id));
+}
+function send() {
+  if (running) { stopRun(); return; }
+  const input = $("input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = ""; input.style.height = "auto";
+  runUserTurn(text);
+}
+$("input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$("input").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+  refreshSendState();
+});
+
+/* ================= boot ================= */
+$("sb-model").textContent = "model gpt-4";
+$("sb-session").textContent = "session default";
+$("m-model").textContent = "gpt-4";
+$("m-session").textContent = "default";
+refreshSendState();
+setTimeout(playFullDemo, 500);
+</script>
+</body>
+</html>

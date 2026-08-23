@@ -68,9 +68,11 @@ export function SessionList({
 export function TopBar({
   theme,
   onToggleTheme,
+  onClear,
 }: {
   theme: "light" | "dark";
   onToggleTheme: () => void;
+  onClear?: () => void;
 }) {
   return (
     <header id="topbar">
@@ -79,6 +81,13 @@ export function TopBar({
         <span>MonoDesk</span>
       </div>
       <div className="topbar-right">
+        {onClear && (
+          <button className="icon-btn" onClick={onClear} title="清除当前会话">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+            </svg>
+          </button>
+        )}
         <button className="icon-btn" onClick={onToggleTheme} title="Toggle theme">
           {theme === "light" ? (
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.8">

@@ -11,9 +11,12 @@ import { fmtMs } from "./stream/markdown";
 import type { MonoDeskEvent, StatusState } from "./ws/protocol";
 import { Conversation } from "./components/Conversation";
 import { Composer } from "./components/Composer";
-import { SessionList, TopBar } from "./components/Chrome";
+import { TopBar } from "./components/Chrome";
+import { Sidebar, type SidebarPage } from "./components/Sidebar";
+import { SkillsPage } from "./components/SkillsPage";
 import { TraceDrawer } from "./components/TraceDrawer";
 import { TraceClient } from "./observability/client";
+import { SkillsClient } from "./skills/client";
 import {
   buildSessionRoutedSetters,
   type SessionState,
@@ -122,6 +125,8 @@ export default function App() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [turnStartAt, setTurnStartAt] = useState(0);
   const [sessions, setSessions] = useState<SessionItem[]>(() => loadSessions());
+  // 当前页：chat（默认）或 skills。Sidebar 上的 rail 按钮切这个。
+  const [currentPage, setCurrentPage] = useState<SidebarPage>("chat");
   // 所有会话运行时状态都在这张 Map 里。视图状态完全 derive。
   const [sessionStates, setSessionStates] = useState<Record<string, SessionState>>(
     () => loadSessionStates()
@@ -190,6 +195,8 @@ export default function App() {
   const [inspectRunId, setInspectRunId] = useState<string | null>(null);
   const traceClientRef = useRef<TraceClient>();
   if (!traceClientRef.current) traceClientRef.current = TraceClient.shared(DEBUG_URL);
+  const skillsClientRef = useRef<SkillsClient>();
+  if (!skillsClientRef.current) skillsClientRef.current = SkillsClient.shared(DEBUG_URL);
   const onInspectRun = useCallback((id: string) => setInspectRunId(id), []);
   const onCloseDrawer = useCallback(() => setInspectRunId(null), []);
   useEffect(() => {
@@ -330,36 +337,44 @@ export default function App() {
 
   return (
     <div id="app">
-      <SessionList
+      <Sidebar
+        currentPage={currentPage}
+        onPageChange={setCurrentPage}
         sessions={sessions}
         activeKey={session}
-        onSelect={onSelectSession}
-        onCreate={onCreateSession}
-        onDelete={onDeleteSession}
+        onSelectSession={onSelectSession}
+        onCreateSession={onCreateSession}
+        onDeleteSession={onDeleteSession}
         canCreate={sessions.length < MAX_SESSIONS}
       />
       <div id="main-col">
         <TopBar
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-          onClear={() => onClearSession(session)}
+          onClear={currentPage === "chat" ? () => onClearSession(session) : undefined}
         />
         <div id="body">
-          <Conversation
-            sessionKey={session}
-            msgs={viewMsgs}
-            engine={engine}
-            onSend={onSend}
-            onInspectRun={onInspectRun}
-          />
-          <Composer
-            running={running}
-            status={status}
-            model={model}
-            turnStartAt={turnStartAt}
-            onSend={onSend}
-            onStop={onStop}
-          />
+          {currentPage === "chat" ? (
+            <>
+              <Conversation
+                sessionKey={session}
+                msgs={viewMsgs}
+                engine={engine}
+                onSend={onSend}
+                onInspectRun={onInspectRun}
+              />
+              <Composer
+                running={running}
+                status={status}
+                model={model}
+                turnStartAt={turnStartAt}
+                onSend={onSend}
+                onStop={onStop}
+              />
+            </>
+          ) : (
+            <SkillsPage client={skillsClientRef.current} />
+          )}
         </div>
         <StatusBar connected={connected} model={model} metrics={metrics} sessionCache={sessionCache} onReconnect={onReconnect} />
         <TraceDrawer

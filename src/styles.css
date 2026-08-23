@@ -58,29 +58,68 @@ body {
 
 #app { display: flex; height: 100vh; overflow: hidden; position: relative; }
 
-/* ---------- rail ---------- */
-#rail {
-  width: 52px; flex: none;
-  background: var(--bg-panel);
-  border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; align-items: center;
-  padding: 14px 0;
-}
-.rail-icons { display: flex; flex-direction: column; align-items: center; flex: 1; }
-.rail-btn {
-  width: 34px; height: 34px; border-radius: 8px;
-  display: grid; place-items: center;
-  color: var(--text-muted); cursor: pointer; margin: 2px 0;
-  border: none; background: transparent;
-}
-
-/* ---------- session list (left rail 2.0) ---------- */
-#session-list {
+/* ---------- sidebar (left column, vertical layout) ----------
+ * 顶部：nav rows（Chat / Skills，每个占满宽度垂直堆叠）
+ * 下面：session list（chat 页）或占位（skills 页）
+ * nav-row 视觉跟下面 .sl-item 一致——只有 icon 不同。
+ *
+ * 整个 sidebar 拉满 100vh + 右 border；之前的「rail + session-list」左右结构
+ * 会有底部高度不对齐的视觉 bug，改成上下结构后消失。 */
+#sidebar {
   width: 220px; flex: none;
+  height: 100%;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column;
-  padding: 14px 10px;
+  min-height: 0;
+}
+
+.sidebar-nav {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.sidebar-nav-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none; background: transparent;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13px; font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.sidebar-nav-row:hover { background: var(--bg-hover); color: var(--text); }
+.sidebar-nav-row.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sidebar-nav-row-icon {
+  flex: none;
+  width: 16px; height: 16px;
+  display: grid; place-items: center;
+  color: inherit;
+}
+.sidebar-nav-row-icon svg { width: 16px; height: 16px; display: block; }
+.sidebar-nav-row-label { flex: 1; }
+
+.sidebar-section-label {
+  padding: 16px 18px 8px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-faint);
+  flex: none;
+}
+
+/* ---------- session list ---------- */
+#session-list {
+  flex: 1;
+  display: flex; flex-direction: column;
+  padding: 8px 10px 14px;
+  min-height: 0;
+  overflow: hidden;
 }
 .sl-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -129,23 +168,6 @@ body {
 .sl-item .sl-del:hover { color: var(--error); background: var(--bg-hover); }
 
 #main-col { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.rail-logo {
-  width: 26px; height: 26px; border-radius: 7px;
-  background: var(--accent); color: #fff;
-  display: grid; place-items: center;
-  margin-bottom: 18px; box-shadow: var(--shadow);
-}
-.rail-icons { display: flex; flex-direction: column; align-items: center; flex: 1; }
-.rail-btn {
-  width: 34px; height: 34px; border-radius: 8px;
-  display: grid; place-items: center;
-  color: var(--text-muted); cursor: pointer; margin: 2px 0;
-  border: none; background: transparent;
-  transition: color 0.12s, background 0.12s;
-}
-.rail-btn:hover { color: var(--text); background: var(--bg-hover); }
-.rail-btn.active { color: var(--accent); background: var(--accent-soft); }
-.rail-btn svg { width: 17px; height: 17px; }
 
 /* ---------- main column ---------- */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -851,3 +873,249 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 .trace-raw summary { cursor: pointer; }
 .trace-raw summary:hover { color: var(--text); }
 .trace-raw .trace-pre { margin-top: 6px; }
+
+/* ---------- skills page ---------- */
+#skills-page {
+  display: flex; flex-direction: column;
+  flex: 1; height: 100%;
+  background: var(--bg);
+  min-width: 0;
+}
+
+/* top bar */
+.sp-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+.sp-title { display: flex; align-items: baseline; gap: 10px; }
+.sp-title h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.sp-count { font-size: 11px; color: var(--text-faint); }
+.sp-actions { display: flex; gap: 8px; align-items: center; }
+.sp-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.sp-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sp-btn.primary {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.sp-btn.primary:hover:not(:disabled) { filter: brightness(1.1); color: #fff; }
+.sp-btn.danger { color: var(--error); border-color: var(--border); }
+.sp-btn.danger:hover:not(:disabled) {
+  background: var(--error); color: #fff; border-color: var(--error);
+}
+
+/* error banner */
+.sp-error {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 10px 20px 0;
+  padding: 8px 12px;
+  background: var(--bg);
+  border-left: 3px solid var(--error);
+  border-radius: 4px;
+  color: var(--error);
+  font-size: 12px;
+  flex: none;
+}
+.sp-error-close {
+  background: transparent; border: none; color: var(--error);
+  cursor: pointer; font-size: 16px; padding: 0 4px;
+}
+
+/* body: list + detail */
+#sp-body {
+  display: flex; flex: 1; min-height: 0;
+  overflow: hidden;
+}
+
+/* list */
+.sp-list {
+  width: 280px; flex: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 8px;
+}
+.sp-loading {
+  padding: 20px; text-align: center;
+  color: var(--text-faint); font-size: 12px;
+}
+.sp-empty {
+  padding: 30px 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.6;
+}
+.sp-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+.sp-item:hover { background: var(--bg-hover); }
+.sp-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.sp-tier {
+  flex: none;
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  min-width: 22px;
+  text-align: center;
+}
+.sp-tier.tier-1 {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.sp-tier.tier-2 {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+.sp-meta { flex: 1; min-width: 0; }
+.sp-name {
+  font-size: 12.5px; font-weight: 500;
+  color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sp-item.active .sp-name { color: var(--accent); }
+.sp-desc {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* detail panel */
+.sp-detail {
+  flex: 1;
+  display: flex; flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+.sp-detail-empty {
+  display: grid; place-items: center;
+  flex: 1;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+.sp-detail-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+.sp-detail-title { display: flex; align-items: center; gap: 10px; }
+.sp-detail-title h3 { margin: 0; font-size: 13px; font-weight: 600; font-family: var(--font-mono); }
+.sp-dirty {
+  font-size: 10.5px; color: var(--accent);
+  font-style: italic;
+}
+.sp-detail-actions { display: flex; gap: 6px; }
+.sp-detail-actions button {
+  padding: 4px 10px; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); font-size: 11.5px;
+  cursor: pointer;
+}
+.sp-detail-actions button:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent);
+}
+.sp-detail-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.sp-editor {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 14px 18px;
+  font-family: var(--font-mono, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  tab-size: 2;
+}
+
+/* toast */
+.sp-toast {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  box-shadow: var(--shadow);
+  z-index: 50;
+  pointer-events: none;
+}
+
+/* modal */
+.sp-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 22px;
+  min-width: 360px;
+  max-width: 460px;
+  box-shadow: var(--shadow);
+}
+.sp-modal h4 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.sp-modal p { margin: 0 0 16px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.sp-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 12.5px;
+  outline: none;
+}
+.sp-input:focus { border-color: var(--accent); }
+.sp-help {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.sp-modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 16px;
+}
+.sp-modal-actions button {
+  padding: 6px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg);
+  color: var(--text); font-size: 12px;
+  cursor: pointer;
+}
+.sp-modal-actions button:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent);
+}
+.sp-modal-actions button:disabled { opacity: 0.4; cursor: not-allowed; }

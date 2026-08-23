@@ -1,4 +1,5 @@
 import type { Envelope, InboundMessage, MonoDeskEvent } from "./protocol";
+import { CHANNEL_NAME, DEFAULT_SESSION_KEY } from "../store/sessions";
 
 export interface WsOptions {
   onEvent: (ev: MonoDeskEvent) => void;
@@ -21,6 +22,11 @@ export class MonoDeskWS {
     this.opts = opts;
   }
 
+  // HMR 重新挂载时替换 callback（保留底层 socket 不动，避免反复 close/open）
+  rebind(opts: WsOptions) {
+    this.opts = opts;
+  }
+
   connect() {
     this.shouldReconnect = true;
     this.open();
@@ -32,6 +38,7 @@ export class MonoDeskWS {
 
     ws.onopen = () => {
       this.reconnectDelay = BACKOFF_BASE;
+      this.sendHello();
       this.opts.onConnectionChange?.(true);
     };
     ws.onmessage = (msg) => {
@@ -55,6 +62,19 @@ export class MonoDeskWS {
     };
   }
 
+  // 连接建立后先发 hello，声明自己是 monodesk channel（Runtime 按 source 索引连接）。
+  private sendHello() {
+    this.ws?.send(
+      JSON.stringify({
+        v: 1,
+        type: "hello",
+        seq: 0,
+        ts: Date.now() / 1000,
+        data: { session_key: DEFAULT_SESSION_KEY, source: CHANNEL_NAME },
+      })
+    );
+  }
+
   send(msg: InboundMessage) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(
@@ -72,5 +92,18 @@ export class MonoDeskWS {
   close() {
     this.shouldReconnect = false;
     this.ws?.close();
+  }
+
+  // 手动重连：丢弃旧 socket（摘掉 onclose 避免它再触发退避重连），立即建新连接。
+  reconnect() {
+    const old = this.ws;
+    this.ws = null;
+    if (old) {
+      old.onclose = null;
+      old.close();
+    }
+    this.shouldReconnect = true;
+    this.reconnectDelay = BACKOFF_BASE;
+    this.open();
   }
 }

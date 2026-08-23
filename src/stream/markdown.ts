@@ -35,6 +35,60 @@ function codeBlock(code: string, lang: string): string {
   );
 }
 
+// ---- GFM 表格 ----
+
+function parseRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+function isSeparatorRow(line: string): boolean {
+  const t = line.trim();
+  return /^\|?[\s:|-]+\|?$/.test(t) && t.includes("-");
+}
+
+// 从 lines[start] 尝试解析表格；不合法返回 null。
+function tryTable(
+  lines: string[],
+  start: number,
+): { html: string; consumed: number } | null {
+  if (start + 1 >= lines.length) return null;
+  if (!isSeparatorRow(lines[start + 1])) return null;
+  const header = parseRow(lines[start]);
+  const aligns = parseRow(lines[start + 1]).map((c) => {
+    if (c.startsWith(":") && c.endsWith(":")) return "center";
+    if (c.endsWith(":")) return "right";
+    if (c.startsWith(":")) return "left";
+    return "";
+  });
+
+  const body: string[][] = [];
+  let i = start + 2;
+  while (i < lines.length && lines[i].trim().startsWith("|")) {
+    body.push(parseRow(lines[i]));
+    i++;
+  }
+
+  const cols = header.length;
+  let html = '<div class="table-wrap"><table><thead><tr>';
+  header.forEach((c, idx) => {
+    const al = aligns[idx] ? ` style="text-align:${aligns[idx]}"` : "";
+    html += `<th${al}>${inline(c)}</th>`;
+  });
+  html += "</tr></thead><tbody>";
+  body.forEach((row) => {
+    html += "<tr>";
+    for (let c = 0; c < cols; c++) html += `<td>${inline(row[c] ?? "")}</td>`;
+    html += "</tr>";
+  });
+  html += "</tbody></table></div>";
+  return { html, consumed: i - start };
+}
+
 export function renderMarkdown(src: string): string {
   const lines = src.split("\n");
   let out = "";
@@ -65,6 +119,14 @@ export function renderMarkdown(src: string): string {
     const t = line.trim();
     if (t === "") {
       out += "<p></p>";
+    } else if (t.startsWith("|")) {
+      const tbl = tryTable(lines, i);
+      if (tbl) {
+        out += tbl.html;
+        i += tbl.consumed;
+        continue;
+      }
+      out += "<p>" + inline(line) + "</p>";
     } else if (/^#{1,3}\s/.test(t)) {
       const m = t.match(/^(#{1,3})\s+(.*)/)!;
       out += "<h" + m[1].length + ">" + inline(m[2]) + "</h" + m[1].length + ">";

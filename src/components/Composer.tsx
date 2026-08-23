@@ -20,6 +20,7 @@ export function Composer({
   const [value, setValue] = useState("");
   const [now, setNow] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
 
   // 运行中的计时（供 footer 展示 elapsed）
   useEffect(() => {
@@ -46,7 +47,19 @@ export function Composer({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.shiftKey) return;
+    // 输入法组词中按回车是「确认候选字母」，不是发送/停止。
+    // isComposing 在部分 IME（尤其 mac 中文输入法）下会报 false，keyCode 229 才是可靠信号；
+    // 另外组词中的回车 key 可能被报成 "Process" 而非 "Enter"。
+    if (
+      composingRef.current ||
+      e.key === "Process" ||
+      e.nativeEvent.isComposing ||
+      e.nativeEvent.keyCode === 229
+    ) {
+      return;
+    }
+    if (e.key === "Enter") {
       e.preventDefault();
       if (running) onStop();
       else submit();
@@ -69,13 +82,18 @@ export function Composer({
               setValue(e.target.value);
               resize();
             }}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
             onKeyDown={onKeyDown}
           />
         </div>
         <div className="composer-foot">
-          <div className="model-chip">
+          <div className="model-chip" title="模型由服务端配置，暂不支持切换">
             <span>{model || "—"}</span>
-            <span className="chev">▾</span>
           </div>
           <div id="composer-status">
             {running ? (

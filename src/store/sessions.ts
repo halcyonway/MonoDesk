@@ -1,0 +1,119 @@
+import type { Msg } from "../stream/engine";
+
+// 会话列表 + 对话历史的本地持久化（localStorage）。
+//
+// 两层存储：
+// - session 元数据（key + 标题）：用于左侧列表
+// - 对话历史（每会话一份 Msg[]）：用于切会话时恢复显示，避免历史丢失
+//
+// MonoX 侧仍按 session_key 管理权威 checkpoint（FsMemoryStore + JsonlCheckpointStore）；
+// 这里只存一份「本地展示用」的历史副本，断网 / 重启后能立即回显。
+//
+// session_key 统一命名：
+// - 主会话共享 = "default"（terminal / monodesk / feishu 的主会话共用同一个）
+// - 其他会话 = `channel_name:channel_session_id`（monodesk 新会话 = "monodesk:<随机 id>"）
+
+export interface SessionItem {
+  key: string;
+  title: string;
+}
+
+export const CHANNEL_NAME = "monodesk";
+export const DEFAULT_SESSION_KEY = "default";
+// 会话数上限：monodesk 自己的规则，从 UI 侧卡（core 不感知）。
+export const MAX_SESSIONS = 20;
+
+const KEY_SESSIONS = "monodesk.sessions";
+const KEY_ACTIVE = "monodesk.activeSession";
+const KEY_COUNTER = "monodesk.chatCounter";
+const KEY_HISTORIES = "monodesk.histories";
+
+const DEFAULT_SESSION: SessionItem = { key: DEFAULT_SESSION_KEY, title: "Default" };
+
+// 随机 session id：时间戳 36 进制 + 4 位随机，本地足够唯一，无特殊字符。
+function newSessionId(): string {
+  const rand = Math.random().toString(36).slice(2, 6);
+  return Date.now().toString(36) + rand;
+}
+
+function nextChatCounter(): number {
+  const n = parseInt(localStorage.getItem(KEY_COUNTER) || "0", 10) || 0;
+  localStorage.setItem(KEY_COUNTER, String(n + 1));
+  return n + 1;
+}
+
+// 新建会话：直接生成 key + 自动标题，不重命名。
+export function newSession(): SessionItem {
+  return { key: `${CHANNEL_NAME}:${newSessionId()}`, title: `Chat ${nextChatCounter()}` };
+}
+
+// 旧版曾把主会话 key 写成 "monodesk:default"，迁回共享主会话 "default"。
+function migrateKey(key: string): string {
+  return key === "monodesk:default" ? "default" : key;
+}
+
+export function loadSessions(): SessionItem[] {
+  try {
+    const raw = localStorage.getItem(KEY_SESSIONS);
+    if (!raw) return [DEFAULT_SESSION];
+    const parsed = JSON.parse(raw) as SessionItem[];
+    if (!Array.isArray(parsed) || parsed.length === 0) return [DEFAULT_SESSION];
+    const migrated = parsed.map((s) => ({ key: migrateKey(s.key), title: s.title }));
+    if (!migrated.some((s) => s.key === DEFAULT_SESSION_KEY)) {
+      migrated.unshift(DEFAULT_SESSION);
+    }
+    return migrated;
+  } catch {
+    return [DEFAULT_SESSION];
+  }
+}
+
+export function saveSessions(sessions: SessionItem[]): void {
+  try {
+    localStorage.setItem(KEY_SESSIONS, JSON.stringify(sessions));
+  } catch {
+    // 存储不可用（隐私模式等）静默失败
+  }
+}
+
+export function loadActiveSession(): string {
+  try {
+    return migrateKey(localStorage.getItem(KEY_ACTIVE) || DEFAULT_SESSION_KEY);
+  } catch {
+    return DEFAULT_SESSION_KEY;
+  }
+}
+
+export function saveActiveSession(key: string): void {
+  try {
+    localStorage.setItem(KEY_ACTIVE, key);
+  } catch {
+    // ignore
+  }
+}
+
+// ---- 对话历史（每会话一份） ----
+
+export function loadHistories(): Record<string, Msg[]> {
+  try {
+    const raw = localStorage.getItem(KEY_HISTORIES);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, Msg[]>;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, Msg[]> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      out[k === "monodesk:default" ? "default" : k] = v as Msg[];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveHistories(histories: Record<string, Msg[]>): void {
+  try {
+    localStorage.setItem(KEY_HISTORIES, JSON.stringify(histories));
+  } catch {
+    // 存储不可用 / 超限时静默失败
+  }
+}

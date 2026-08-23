@@ -5,20 +5,25 @@ import { fmtMs, renderMarkdown } from "../stream/markdown";
 // ---- 流式文本块 ----
 // 有 text（冻结 / 历史恢复）→ 静态渲染；无 text（正在流式）→ 引擎直接写 innerHTML。
 
+// ---- 流式文本块 ----
+// 有 text（冻结 / 历史恢复）→ 静态渲染；无 text（正在流式）→ 引擎直接写 innerHTML。
+
 const TextStream = memo(function TextStream({
   engine,
+  sessionKey,
   text,
 }: {
   engine: StreamEngine;
+  sessionKey: string;
   text?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (text === undefined) {
-      engine.bindAssistant(ref.current);
-      return () => engine.bindAssistant(null);
+      engine.bindAssistant(sessionKey, ref.current);
+      return () => engine.bindAssistant(sessionKey, null);
     }
-  }, [engine, text]);
+  }, [engine, sessionKey, text]);
   if (text !== undefined) {
     return <div className="stream" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
   }
@@ -30,10 +35,12 @@ const TextStream = memo(function TextStream({
 
 const ReasonBlock = memo(function ReasonBlock({
   engine,
+  sessionKey,
   id,
   text,
 }: {
   engine: StreamEngine;
+  sessionKey: string;
   id: string;
   text?: string;
 }) {
@@ -51,10 +58,10 @@ const ReasonBlock = memo(function ReasonBlock({
     const head = headRef.current;
     const body = bodyRef.current;
     if (container && head && body) {
-      engine.bindReasoning({ id, container, head, body });
+      engine.bindReasoning(sessionKey, { id, container, head, body });
     }
-    return () => engine.unbindReasoning();
-  }, [engine, id, text]);
+    return () => engine.unbindReasoning(sessionKey);
+  }, [engine, sessionKey, id, text]);
 
   return (
     <div className={"block reasoning" + (open ? " open" : "")} ref={containerRef}>
@@ -143,12 +150,20 @@ function ErrorBlock({ text }: { text: string }) {
   );
 }
 
-function ChildView({ child, engine }: { child: Child; engine: StreamEngine }) {
+function ChildView({
+  child,
+  engine,
+  sessionKey,
+}: {
+  child: Child;
+  engine: StreamEngine;
+  sessionKey: string;
+}) {
   switch (child.kind) {
     case "reasoning":
-      return <ReasonBlock engine={engine} id={child.id} text={child.text} />;
+      return <ReasonBlock engine={engine} sessionKey={sessionKey} id={child.id} text={child.text} />;
     case "text":
-      return <TextStream engine={engine} text={child.text} />;
+      return <TextStream engine={engine} sessionKey={sessionKey} text={child.text} />;
     case "tool":
       return <ToolBlock child={child} />;
     case "note":
@@ -158,7 +173,17 @@ function ChildView({ child, engine }: { child: Child; engine: StreamEngine }) {
   }
 }
 
-function MsgView({ msg, engine }: { msg: Msg; engine: StreamEngine }) {
+function MsgView({
+  msg,
+  engine,
+  sessionKey,
+  onInspectRun,
+}: {
+  msg: Msg;
+  engine: StreamEngine;
+  sessionKey: string;
+  onInspectRun?: (runId: string) => void;
+}) {
   if (msg.role === "user") {
     return (
       <div className="msg user">
@@ -167,16 +192,62 @@ function MsgView({ msg, engine }: { msg: Msg; engine: StreamEngine }) {
       </div>
     );
   }
+  const showTrace = !!(msg.runId && onInspectRun);
   return (
     <div className="msg assistant">
-      <div className="label">Agent</div>
+      <div className="label">
+        <span>Agent</span>
+        {msg.tokens && msg.tokens.completion > 0 && (
+          <span className="msg-meta-tokens">
+            {msg.tokens.completion.toLocaleString()} tok
+          </span>
+        )}
+        {typeof msg.latencyMs === "number" && msg.latencyMs > 0 && (
+          <span className="msg-meta-lat">{fmtMs(msg.latencyMs)}</span>
+        )}
+        {msg.tokens && cacheHitRatio(msg.tokens) != null && (
+          <span className="msg-meta-cache" title="prompt cache hit ratio">
+            ⚡ {fmtPct(cacheHitRatio(msg.tokens)!)}
+          </span>
+        )}
+        {showTrace && (
+          <button
+            className="trace-btn"
+            title="查看 trace"
+            onClick={() => msg.runId && onInspectRun?.(msg.runId)}
+          >
+            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <circle cx="3.5" cy="3.5" r="1.2" />
+              <circle cx="8.5" cy="3.5" r="1.2" />
+              <circle cx="6" cy="8.5" r="1.2" />
+              <path d="M4 4.5L5 7M8 4.5L7 7" />
+            </svg>
+            <span>trace</span>
+          </button>
+        )}
+      </div>
       <div className="stream">
         {msg.children.map((c) => (
-          <ChildView key={c.id} child={c} engine={engine} />
+          <ChildView key={c.id} child={c} engine={engine} sessionKey={sessionKey} />
         ))}
       </div>
     </div>
   );
+}
+
+// 缓存命中率：cached_tokens / prompt_tokens。
+//   cached 缺失（LLM 没返回这个字段）→ 返回 null → UI 隐藏 pill
+//   cached = 0（LLM 返回了但命中 0）→ 也返回 null → UI 隐藏 pill（避免 0.0% 噪声）
+//   cached > 0 → 返回命中率 → UI 显示 ⚡ X.X%
+function cacheHitRatio(t: { prompt: number; completion: number; cached?: number }): number | null {
+  if (t.prompt > 0 && typeof t.cached === "number" && t.cached > 0) {
+    return t.cached / t.prompt;
+  }
+  return null;
+}
+
+function fmtPct(x: number): string {
+  return (x * 100).toFixed(1) + "%";
 }
 
 const SUGGESTIONS = [
@@ -186,37 +257,52 @@ const SUGGESTIONS = [
 ];
 
 export function Conversation({
+  sessionKey,
   msgs,
   engine,
   onSend,
+  onInspectRun,
 }: {
+  // #74: DOM 绑定（bindScroll / bindAssistant / bindReasoning）都按 sessionKey
+  // 路由到对应 PerSessionStream。App 必须把当前 active session 传下来。
+  sessionKey: string;
   msgs: Msg[];
   engine: StreamEngine;
   onSend: (text: string) => void;
+  onInspectRun?: (runId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    engine.bindScroll(scrollRef.current);
-    return () => engine.bindScroll(null);
-  }, [engine]);
+    engine.bindScroll(sessionKey, scrollRef.current);
+    return () => engine.bindScroll(sessionKey, null);
+  }, [engine, sessionKey]);
 
   // 自动锚定底部并预留 composer 高度的呼吸空间（豆包式：回复和输入框之间留大片空白）。
-  // 1) 内容不足一屏（scrollHeight <= clientHeight）→ 内容被钉在视口顶部，最后一条
-  //    消息下方留 ~半屏空白，让回复不被 composer 压住。
-  // 2) 内容溢出 → 滚到真正底部再多留 ~140px（composer 高度 + 一行呼吸）。
+  // 触发：每次 msgs 引用变化都跑 —— 这同时覆盖了三种场景：
+  //   1) 启动加载历史（loadHistories 一次性把内容塞进 state）→ 自动滚到底
+  //   2) 切会话（viewMsgs 引用变化）→ 自动滚到新会话底部
+  //   3) 流式响应（每 flush 产生新 msgs 引用）→ 持续跟随 tail
+  //   4) 用户在底部时 msgs 不变 → effect 不跑；不会干扰已锚定的滚动位置
+  //
+  // 算法：
+  //   - 内容不足一屏（scrollHeight <= clientHeight）→ 不滚；保留顶部对齐。
+  //   - 内容溢出 → 滚到底 + 额外 140px（composer 高度 + 一行呼吸）。
   useEffect(() => {
-    if (!engine.consumeScrollRequest()) return;
     const el = scrollRef.current;
-    if (!el) return;
-    const overflow = el.scrollHeight - el.clientHeight;
-    if (overflow <= 0) {
-      // 内容太短不够一屏：不滚，让内容留在顶部，最下方自然留出整片空白
-      el.scrollTop = 0;
-      return;
-    }
-    // 内容溢出：滚到底 + 额外 140px 留白
-    el.scrollTop = overflow + 140;
-  });
+    if (!el || msgs.length === 0) return;
+    // 等一帧让 DOM 完成 layout（启动时 msgs 刚 set，可能还没绘制）
+    const raf = requestAnimationFrame(() => {
+      const e = scrollRef.current;
+      if (!e) return;
+      const overflow = e.scrollHeight - e.clientHeight;
+      if (overflow <= 0) {
+        e.scrollTop = 0;
+        return;
+      }
+      e.scrollTop = overflow + 140;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [msgs]);
 
   const empty = msgs.length === 0;
 
@@ -237,7 +323,15 @@ export function Conversation({
             </div>
           </div>
         ) : (
-          msgs.map((m) => <MsgView key={m.id} msg={m} engine={engine} />)
+          msgs.map((m) => (
+              <MsgView
+                key={m.id}
+                msg={m}
+                engine={engine}
+                sessionKey={sessionKey}
+                onInspectRun={onInspectRun}
+              />
+            ))
         )}
       </div>
     </div>

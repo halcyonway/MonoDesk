@@ -2,12 +2,17 @@
 //
 // 核心原则（与 preview 一致）：token / reasoning 不做逐字 React setState，
 // 而是 token 缓冲 + requestAnimationFrame 合并 → 直接写 DOM 文本节点，每帧最多一次重绘。
-// React 只负责“结构性块”（turn / reasoning 开关 / tool 起止 / final / error / metric）。
+// React 只负责"结构性块"（turn / reasoning 开关 / tool 起止 / final / error / metric）。
 //
 // 结构性块用 key 稳定 + 组件浅 props 不变，React 跳过重渲染，因此引擎直接改的
 // innerHTML / class 不会被打断。
 //
 // 文本内容在「冻结」（freeze）时写回 Child.text，用于本地持久化 + 切会话后静态渲染。
+//
+// #74：所有运行时缓冲（tokenBuf / jbQueue / currentRunId / currentMetric / DOM 绑定 / 定时器）
+// 都按 sessionKey 隔离到 PerSessionStream。同一 StreamEngine 实例维护一张 Map，
+// dispatch(ev) 按 ev.data.session_key 选对应 stream，late event 永远不会污染别的 session
+// （之前根因：所有字段都是 this.X 全局共享，A 没流完就切到 B 发 → A 的 token 写到 B 的 buffer）。
 
 import { CARET, esc, fmtMs, renderMarkdown, truncate } from "./markdown";
 import type { MonoDeskEvent, StatusState, ToolResultData } from "../ws/protocol";
@@ -31,7 +36,20 @@ export type Child =
 
 export type Msg =
   | { id: string; role: "user"; text: string }
-  | { id: string; role: "assistant"; children: Child[] };
+  | {
+      id: string;
+      role: "assistant";
+      children: Child[];
+      runId?: string | null;
+      // 行内指标（final 时从最新 metric 写回，用于 agent label 下方一行：
+      // "X tok · Yms · ⚡ Z% · [trace]"）。
+      //
+      // `cached` 是 optional：LLM 流式响应有时候不带 `prompt_tokens_details.cached_tokens`
+      // 字段（实测 MiniMax：< 512 token 的 prompt / cache build-up 阶段都会缺失），
+      // 缺失时整个字段不写，让 UI 能区分「服务端没报告」和「报告了 0」。
+      tokens?: { prompt: number; completion: number; cached?: number } | null;
+      latencyMs?: number | null;
+    };
 
 export interface Step {
   idx: number;
@@ -91,251 +109,337 @@ const MAX_BUFFER_MS = 1500;      // 积压过大则跳过（模型太快）
 const TICK_MS = 33;              // 30fps tick
 const CHARS_PER_TICK = 3;        // 每 tick 解锁 3 个字符（≈ 90 cps @ 30fps）
 
-export class StreamEngine {
-  private cb: EngineCallbacks;
+// ---- Per-session stream state (#74 + #78) ----
+//
+// 每个活跃 session 一份独立的运行时状态。包含流式 token 缓冲、jitter buffer、
+// 当前活跃 child id、DOM 元素引用、定时器。
+//
+// #78：移除「trace 捕获」字段（currentRunId / currentMetric）。
+// 之前的设计是「metric → 累积到 currentRunId/currentMetric → final 时挂到 msg」，
+// 这要求 engine 持有「跨事件累积」状态，对调试和隔离都不友好。
+// 新设计：metric 事件直接写 msg（最后一条 metric 覆盖前一条），final 不再管这些。
+// 这也意味着 trace_id / tokens / latencyMs 都是「单事件写入」，没有跨事件状态。
+//
+// 关键不变量：engine 实例只有一个，stream 有 N 个，每个 stream 完全独立。
+// engine 本身没有任何跨 session 的共享字段（this.cb / this.activeSessionKey 都没了），
+// dispatch / startTurn / pauseStream / bind* 都接受 sessionKey 显式定位到对应 stream。
+interface PerSessionStream {
+  // DOM 绑定（Conversation 在 mount/unmount 时设/清；background session 这里为 null，
+  // token 仍可通过 dispatch 进入，但 paintText 看到 null 就跳过 DOM 写）。
+  assistantEl: HTMLElement | null;
+  reasoningEls: ReasoningEls | null;
+  scrollEl: HTMLElement | null;
 
-  // 流式缓冲
-  private tokenBuf = "";
-  private reasoningBuf = "";
-  private reasoningStart = 0;
-  // 最近写入的字符 DOM span 列表（动画结束后合并成 text node 释放）
-  private freshSpans: HTMLSpanElement[] = [];
+  // 回合状态
+  turnOpen: boolean;
+  streaming: boolean;
+  userSendTime: number;
+  firstTokenAt: number;
+  tokenCount: number;
+  curToolId: string | null;
 
-  // 当前活跃的 text / reasoning 子块 id（freeze 时把内容写回 model）
-  private curTextId: string | null = null;
-  private curReasoningId: string | null = null;
+  // 文本 / 推理缓冲
+  tokenBuf: string;
+  reasoningBuf: string;
+  reasoningStart: number;
+  curTextId: string | null;
+  curReasoningId: string | null;
 
   // Jitter buffer 状态
-  // - queue: 还没到「虚拟播放时间」的字符（每字符带 arriveAt）
-  // - paintedBuf: 已上屏的字符（按 arriveAt 顺序累计）
-  // - painted: paintedBuf 长度（冗余存，避免每次 length 计算）
-  // - playhead: 虚拟播放时间（ms），按 rate 匀速推进
-  // - lastFlushAt: 上一帧实际 wall 时间，用来计算本帧 dt
-  // - lastWriteIndex: 已写入 DOM 的 paintedBuf 切片位置（增量写）
-  // - pendingChunk: 本帧从 queue 解锁出来的字符串（增量追加到 DOM）
-  private jbQueue: Array<{ ch: string; arriveAt: number }> = [];
-  private paintedBuf = "";
-  private painted = 0;
-  private jbPlayhead = 0;
-  private jbLastFlushAt = 0;
-  private lastWriteIndex = 0;
-  private pendingChunk = "";
+  jbQueue: Array<{ ch: string; arriveAt: number }>;
+  paintedBuf: string;
+  painted: number;
+  jbPlayhead: number;
+  jbLastFlushAt: number;
+  freshSpans: HTMLSpanElement[];
 
-  // 活跃流式目标（由组件 mount 时绑定）
-  private reasoningEls: ReasoningEls | null = null;
-  private assistantEl: HTMLElement | null = null;
-  private scrollEl: HTMLElement | null = null;
+  // 每 stream 独立的 timer（background session 不能 flush 进死掉的 DOM；
+  // 两个 session 同时活跃也要各自 tick）。
+  flushTimer: number | null;
+  mergeTimer: number | null;
 
-  // 「请求滚到底」标记：每次 flush 置 true；Conversation 在 DOM 更新后
-  // 调 consumeScrollRequest() 取走，根据用户当前是否在底部决定真的滚。
-  private scrollRequest = false;
+  // 「请滚到底」标记
+  scrollRequest: boolean;
+}
 
-  // 回合统计
-  private userSendTime = 0;
-  private firstTokenAt = 0;
-  private tokenCount = 0;
-  private streaming = false;
-  private turnOpen = false;
-  private curToolId: string | null = null;
+function emptyStream(): PerSessionStream {
+  return {
+    assistantEl: null,
+    reasoningEls: null,
+    scrollEl: null,
+    turnOpen: false,
+    streaming: false,
+    userSendTime: 0,
+    firstTokenAt: 0,
+    tokenCount: 0,
+    curToolId: null,
+    tokenBuf: "",
+    reasoningBuf: "",
+    reasoningStart: 0,
+    curTextId: null,
+    curReasoningId: null,
+    jbQueue: [],
+    paintedBuf: "",
+    painted: 0,
+    jbPlayhead: 0,
+    jbLastFlushAt: 0,
+    freshSpans: [],
+    flushTimer: null,
+    mergeTimer: null,
+    scrollRequest: false,
+  };
+}
 
-  constructor(cb: EngineCallbacks) {
-    this.cb = cb;
+export class StreamEngine {
+  private router: (sessionKey: string) => EngineCallbacks;
+  // #78：engine 实例上**没有任何**跨 session 的共享字段（this.cb / this.activeSessionKey
+  // 都删了）。每个 handler 接收 (cb, sk) 作为入参 —— cb 是这次调用从 router(sk) 拿到的
+  // 一次性 setter 集，sk 是显式传入的 sessionKey。dispatch 完全自包含，没有任何
+  // 「上次 event 的状态影响这次 event」的可能。
+  private streams = new Map<string, PerSessionStream>();
+
+  constructor(router: (sessionKey: string) => EngineCallbacks) {
+    this.router = router;
+  }
+
+  private streamFor(sk: string): PerSessionStream {
+    let s = this.streams.get(sk);
+    if (!s) {
+      s = emptyStream();
+      this.streams.set(sk, s);
+    }
+    return s;
   }
 
   // ---- 组件挂载绑定 ----
+  //
+  // 所有 binding 函数都接收 sessionKey（App 把 `session` 传给 Conversation，
+  // Conversation 透传给 TextStream / ReasonBlock）。这样 unmount 时 cleanup
+  // 也能精准清掉对应 stream 的 DOM ref，不会误清当前 active session。
 
-  bindScroll(el: HTMLElement | null) {
-    this.scrollEl = el;
+  bindScroll(sessionKey: string, el: HTMLElement | null) {
+    this.streamFor(sessionKey).scrollEl = el;
   }
-  // 由 Conversation 在每次 React render 后调用：返回自上次以来是否「请求过滚到底」。
-  // 引擎不会自己改 DOM scrollTop；具体策略（跟随 / 脱离 / 浮按钮）由 UI 决定。
-  consumeScrollRequest(): boolean {
-    const r = this.scrollRequest;
-    this.scrollRequest = false;
+
+  /** 由外部消费 scrollRequest（当前未在 Conversation 中使用 —— Conversation 直接靠
+   * msgs 引用变化触发 useEffect 滚到底）。保留 API 以备将来切到「引擎驱动滚动」时用。 */
+  consumeScrollRequest(sessionKey: string): boolean {
+    const s = this.streamFor(sessionKey);
+    const r = s.scrollRequest;
+    s.scrollRequest = false;
     return r;
   }
-  bindReasoning(els: ReasoningEls) {
-    // 只在 id 匹配 curReasoningId 时才绑定。React 重渲染时可能短暂 mount
-    // 别的 block（children 列表变化）——忽略那些，避免 reasoningEls 错位。
-    if (els.id === this.curReasoningId) {
-      this.reasoningEls = els;
-      this.scheduleFlush();
+
+  bindReasoning(sessionKey: string, els: ReasoningEls | null) {
+    const s = this.streamFor(sessionKey);
+    if (els) {
+      // 只在 id 匹配 curReasoningId 时才绑定。React 重渲染时可能短暂 mount
+      // 别的 block（children 列表变化）——忽略那些，避免 reasoningEls 错位。
+      if (els.id === s.curReasoningId) {
+        s.reasoningEls = els;
+        this.scheduleFlush(s);
+      }
+    } else {
+      s.reasoningEls = null;
     }
   }
-  unbindReasoning() {
-    this.reasoningEls = null;
+
+  unbindReasoning(sessionKey: string) {
+    this.streamFor(sessionKey).reasoningEls = null;
   }
-  bindAssistant(el: HTMLElement | null) {
-    this.assistantEl = el;
-    this.scheduleFlush();
+
+  bindAssistant(sessionKey: string, el: HTMLElement | null) {
+    const s = this.streamFor(sessionKey);
+    s.assistantEl = el;
+    if (el) this.scheduleFlush(s);
   }
 
   // ---- 用户动作 ----
 
-  startTurn(text: string) {
-    this.cb.setMsgs((prev) => [
+  startTurn(text: string, sessionKey: string) {
+    // startTurn 由 App 主动调用（不在 dispatch 路径上），所以没有 ev.data.session_key
+    // 可读 —— 必须由 App 显式传入「这条 user_input 要进哪个 session」。
+    const cb = this.router(sessionKey);
+    cb.setMsgs((prev) => [
       ...prev,
       { id: nextId(), role: "user", text },
       { id: nextId(), role: "assistant", children: [] },
     ]);
-    this.resetTurn();
-    this.turnOpen = true;
-    this.streaming = true;
-    this.userSendTime = now();
-    this.cb.setStatus("thinking");
+    this.resetTurn(cb, sessionKey);
+    const s = this.streamFor(sessionKey);
+    s.turnOpen = true;
+    s.streaming = true;
+    s.userSendTime = now();
+    cb.setStatus("thinking");
   }
 
   // 暂停当前流（切会话 / 视图离开时调用）：把已缓冲内容冻结写回 model。
-  pauseStream() {
-    this.freezeText();
-    this.freezeReasoning();
+  // 必须由 App 显式传入 sessionKey —— 每次调用都从 router(sk) 拿新的 cb，
+  // 不会误写到别的 session。
+  pauseStream(sessionKey: string) {
+    const cb = this.router(sessionKey);
+    this.freezeText(cb, sessionKey);
+    this.freezeReasoning(cb, sessionKey);
   }
 
-  private resetTurn() {
-    this.tokenBuf = "";
-    this.reasoningBuf = "";
-    this.reasoningStart = 0;
-    this.firstTokenAt = 0;
-    this.tokenCount = 0;
-    this.streaming = false;
-    this.turnOpen = false;
-    this.curToolId = null;
-    this.curTextId = null;
-    this.curReasoningId = null;
-    this.painted = 0;
-    this.paintedBuf = "";
-    this.jbQueue = [];
-    this.jbPlayhead = 0;
-    this.jbLastFlushAt = 0;
-    this.freshSpans = [];
-    this.reasoningEls = null;
-    this.assistantEl = null;
-    this.cb.setMetrics(EMPTY_METRICS);
-    this.cb.setSteps([]);
+  private resetTurn(cb: EngineCallbacks, sessionKey: string) {
+    const s = this.streamFor(sessionKey);
+    s.tokenBuf = "";
+    s.reasoningBuf = "";
+    s.reasoningStart = 0;
+    s.firstTokenAt = 0;
+    s.tokenCount = 0;
+    s.streaming = false;
+    s.turnOpen = false;
+    s.curToolId = null;
+    s.curTextId = null;
+    s.curReasoningId = null;
+    s.painted = 0;
+    s.paintedBuf = "";
+    s.jbQueue = [];
+    s.jbPlayhead = 0;
+    s.jbLastFlushAt = 0;
+    s.freshSpans = [];
+    s.reasoningEls = null;
+    s.assistantEl = null;
+    // #78：移除了 currentRunId / currentMetric —— 新一轮对话的 metric 由
+    // onMetric 直接写到 msg，不需要「清累积状态」这一步。
+    cb.setMetrics(EMPTY_METRICS);
+    cb.setSteps([]);
   }
 
   // ---- WS 事件分发 ----
 
   dispatch(ev: MonoDeskEvent) {
+    // #78：每次 dispatch 完全自包含 —— 从 router(sk) 拿一次性 cb，把 cb + sk
+    // 显式传给 handler。engine 实例本身没有任何「上次 event 状态影响这次 event」
+    // 的字段（this.cb / this.activeSessionKey 都删了）。
+    const sk = ev.data.session_key ?? "__default__";
+    const cb = this.router(sk);
     switch (ev.type) {
       case "hello":
-        this.cb.setConnected(true);
+        cb.setConnected(true);
         // 服务端报告的模型只在尚未选择时回填；session_key 由 MonoDesk 本地管理，
         // 不能覆盖用户当前选中的会话。
-        this.cb.setModel((m) => m || ev.data.model);
+        cb.setModel((m) => m || ev.data.model);
         break;
       case "status":
-        this.onStatus(ev.data.state);
+        this.onStatus(cb, sk, ev.data.state);
         break;
       case "reasoning":
-        this.onReasoning(ev.data.text);
+        this.onReasoning(cb, sk, ev.data.text);
         break;
       case "token":
-        this.onToken(ev.data.text);
+        this.onToken(cb, sk, ev.data.text);
         break;
       case "tool_start":
-        this.onToolStart(ev.data.name, ev.data.args);
+        this.onToolStart(cb, sk, ev.data.name, ev.data.args);
         break;
       case "tool_end":
-        this.onToolEnd(ev.data.result, ev.data.latency_ms);
+        this.onToolEnd(cb, sk, ev.data.result, ev.data.latency_ms);
         break;
       case "metric":
-        this.onMetric(ev.data.metrics);
+        this.onMetric(cb, sk, ev.data.metrics, ev.data.trace_id);
         break;
       case "final":
-        this.onFinal();
+        this.onFinal(cb, sk, ev.data.trace_id);
         break;
       case "card":
-        this.onCard(ev.data.data);
+        this.onCard(cb, sk, ev.data.data);
         break;
       case "error":
-        this.onError(ev.data.code, ev.data.msg);
+        this.onError(cb, sk, ev.data.code, ev.data.msg);
         break;
     }
   }
 
   // ---- 事件处理 ----
 
-  private onStatus(state: StatusState) {
-    this.cb.setStatus(state);
+  private onStatus(cb: EngineCallbacks, sk: string, state: StatusState) {
+    cb.setStatus(state);
+    const s = this.streamFor(sk);
     if (state === "thinking") {
-      if (!this.turnOpen) this.ensureTurn();
+      if (!s.turnOpen) this.ensureTurn(cb, sk);
     } else {
-      this.freezeText();
-      this.freezeReasoning();
-      if (state === "wait_io" || state === "idle") this.turnOpen = false;
+      this.freezeText(cb, sk);
+      this.freezeReasoning(cb, sk);
+      if (state === "wait_io" || state === "idle") s.turnOpen = false;
     }
   }
 
-  private ensureTurn() {
-    this.cb.setMsgs((prev) => {
+  private ensureTurn(cb: EngineCallbacks, sk: string) {
+    cb.setMsgs((prev) => {
       const last = prev[prev.length - 1];
       if (last && last.role === "assistant") return prev;
       return [...prev, { id: nextId(), role: "assistant", children: [] }];
     });
-    this.turnOpen = true;
+    const s = this.streamFor(sk);
+    s.turnOpen = true;
   }
 
-  private onReasoning(text: string) {
-    if (!this.turnOpen) this.ensureTurn();
+  private onReasoning(cb: EngineCallbacks, sk: string, text: string) {
+    const s = this.streamFor(sk);
+    if (!s.turnOpen) this.ensureTurn(cb, sk);
     // 用稳定的 child id (curReasoningId) 判断，不再用 reasoningEls（它是临时绑定，
     // 会被 React 重渲染清掉）。
-    if (this.curReasoningId == null) {
+    if (s.curReasoningId == null) {
       const id = nextId();
-      this.curReasoningId = id;
-      this.appendChild({ id, kind: "reasoning" });
-      this.reasoningStart = now();
+      s.curReasoningId = id;
+      this.appendChild(cb, sk, { id, kind: "reasoning" });
+      s.reasoningStart = now();
     }
-    this.reasoningBuf += text;
-    this.scheduleFlush();
+    s.reasoningBuf += text;
+    this.scheduleFlush(s);
   }
 
-  private onToken(text: string) {
-    if (!this.turnOpen) this.ensureTurn();
-    if (!this.assistantEl) {
-      this.freezeReasoning();
+  private onToken(cb: EngineCallbacks, sk: string, text: string) {
+    const s = this.streamFor(sk);
+    if (!s.turnOpen) this.ensureTurn(cb, sk);
+    if (!s.assistantEl) {
+      this.freezeReasoning(cb, sk);
       const id = nextId();
-      this.curTextId = id;
-      this.appendChild({ id, kind: "text" });
-      this.streaming = true;
-      this.painted = 0;
-      this.paintedBuf = "";
-      this.jbQueue = [];
-      this.jbPlayhead = 0;
-      this.jbLastFlushAt = 0;
+      s.curTextId = id;
+      this.appendChild(cb, sk, { id, kind: "text" });
+      s.streaming = true;
+      s.painted = 0;
+      s.paintedBuf = "";
+      s.jbQueue = [];
+      s.jbPlayhead = 0;
+      s.jbLastFlushAt = 0;
     }
-    if (this.firstTokenAt === 0) {
-      this.firstTokenAt = now();
-      const ttft = this.firstTokenAt - this.userSendTime;
-      this.cb.setMetrics((m) => ({ ...m, ttft: Math.round(ttft) }));
+    if (s.firstTokenAt === 0) {
+      s.firstTokenAt = now();
+      const ttft = s.firstTokenAt - s.userSendTime;
+      cb.setMetrics((m) => ({ ...m, ttft: Math.round(ttft) }));
       // 第一个 token 到达：初始化虚拟播放头 = 当前时间 + TARGET_BUFFER_MS 积压
-      this.jbPlayhead = this.firstTokenAt + TARGET_BUFFER_MS;
-      this.jbLastFlushAt = this.firstTokenAt;
+      s.jbPlayhead = s.firstTokenAt + TARGET_BUFFER_MS;
+      s.jbLastFlushAt = s.firstTokenAt;
     }
     // 每个字符打上"到达时间戳"，进入 jitter queue。
     // tokenBuf 始终是「已上屏 + 队列里全部」的总拼接，方便 freeze 时拿到完整文本。
     const t = now();
     for (const ch of text) {
-      this.jbQueue.push({ ch, arriveAt: t });
+      s.jbQueue.push({ ch, arriveAt: t });
     }
-    this.tokenBuf += text;
-    this.tokenCount += text.length;
-    const elapsed = (now() - this.firstTokenAt) / 1000;
+    s.tokenBuf += text;
+    s.tokenCount += text.length;
+    const elapsed = (now() - s.firstTokenAt) / 1000;
     if (elapsed > 0) {
-      this.cb.setMetrics((m) => ({ ...m, tps: Math.round(this.tokenCount / elapsed) }));
+      cb.setMetrics((m) => ({ ...m, tps: Math.round(s.tokenCount / elapsed) }));
     }
-    this.scheduleFlush();
+    this.scheduleFlush(s);
   }
 
-  private onToolStart(name: string, args: Record<string, unknown>) {
-    this.freezeText();
-    this.freezeReasoning();
+  private onToolStart(cb: EngineCallbacks, sk: string, name: string, args: Record<string, unknown>) {
+    this.freezeText(cb, sk);
+    this.freezeReasoning(cb, sk);
     const argsStr = Object.entries(args || {})
       .map(([k, v]) => k + "=" + JSON.stringify(v))
       .join(" ");
     const id = nextId();
-    this.curToolId = id;
-    this.appendChild({
+    const s = this.streamFor(sk);
+    s.curToolId = id;
+    this.appendChild(cb, sk, {
       id,
       kind: "tool",
       name,
@@ -344,55 +448,118 @@ export class StreamEngine {
     });
   }
 
-  private onToolEnd(result: ToolResultData, latencyMs: number) {
-    const id = this.curToolId;
-    this.curToolId = null;
-    if (id) this.patchChild(id, { state: "done", result, latencyMs });
+  private onToolEnd(cb: EngineCallbacks, sk: string, result: ToolResultData, latencyMs: number) {
+    const s = this.streamFor(sk);
+    const id = s.curToolId;
+    s.curToolId = null;
+    if (id) this.patchChild(cb, sk, id, { state: "done", result, latencyMs });
   }
 
-  private onMetric(m: Record<string, any>) {
-    this.freezeText();
+  // #78：metric 事件直接写 msg 的 runId / tokens / latencyMs —— 最后一条 metric
+  // 覆盖前一条。完全去掉 currentRunId / currentMetric 这种「跨事件累积状态」，
+  // engine 实例本身不再持有任何「上次 event 影响这次 event」的字段。
+  // 数据写到最近一条 assistant msg（一定是 metric 之前的某次 startTurn / ensureTurn 创建的）。
+  private onMetric(cb: EngineCallbacks, sk: string, m: Record<string, any>, traceId?: string) {
+    this.freezeText(cb, sk);
     const tok = m.tokens || {};
     const text =
       "step " + m.step_idx + " · " + fmtMs(m.latency_ms) + " · " +
       (tok.completion_tokens ?? "?") + " tok · " + (m.tool_calls_count || 0) + " tool";
-    this.appendChild({ id: nextId(), kind: "note", text });
-    this.cb.setSteps((prev) => [
+    this.appendChild(cb, sk, { id: nextId(), kind: "note", text });
+    cb.setSteps((prev) => [
       ...prev,
       { idx: m.step_idx, latencyMs: m.latency_ms, tokens: tok.completion_tokens ?? 0, tools: m.tool_calls_count || 0 },
     ]);
-    if (tok.prompt_tokens != null) this.cb.setMetrics((mm) => ({ ...mm, prompt: tok.prompt_tokens }));
-    if (tok.completion_tokens != null) this.cb.setMetrics((mm) => ({ ...mm, completion: tok.completion_tokens }));
+    if (tok.prompt_tokens != null) cb.setMetrics((mm) => ({ ...mm, prompt: tok.prompt_tokens }));
+    if (tok.completion_tokens != null) cb.setMetrics((mm) => ({ ...mm, completion: tok.completion_tokens }));
+
+    // #78：直接把 runId + 最新 metric 写到最近一条 assistant msg。
+    // 用 cb.setMsgs 的 (prev) => ... 函数式更新，保证 immutable（不修改 prev）。
+    //
+    // cached 是 optional：只有 LLM 真的给了 cached_tokens（>0）才写这个字段，
+    // 缺失或 0 都让 cached 不出现在 msg.tokens 上 —— UI 看到 undefined 就隐藏 pill，
+    // 避免 0% 噪声。
+    const update: {
+      runId?: string;
+      tokens?: { prompt: number; completion: number; cached?: number };
+      latencyMs?: number;
+    } = {};
+    if (traceId) update.runId = traceId;
+    if (typeof m.latency_ms === "number") {
+      const tokensUpdate: { prompt: number; completion: number; cached?: number } = {
+        prompt: typeof tok.prompt_tokens === "number" ? tok.prompt_tokens : 0,
+        completion: typeof tok.completion_tokens === "number" ? tok.completion_tokens : 0,
+      };
+      // 只有 cached_tokens > 0 才写 cached 字段；缺失或 0 都跳过（让 UI 隐藏 pill）。
+      if (typeof tok.cached_tokens === "number" && tok.cached_tokens > 0) {
+        tokensUpdate.cached = tok.cached_tokens;
+      }
+      update.tokens = tokensUpdate;
+      update.latencyMs = m.latency_ms;
+    }
+    if (Object.keys(update).length > 0) {
+      cb.setMsgs((prev) => {
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].role === "assistant") {
+            const next = [...prev];
+            next[i] = { ...next[i], ...update };
+            return next;
+          }
+        }
+        return prev;
+      });
+    }
   }
 
-  private onFinal() {
-    this.freezeText();
-    this.freezeReasoning();
-    this.streaming = false;
-    const total = now() - this.userSendTime;
-    this.cb.setMetrics((m) => ({ ...m, total: Math.round(total) }));
+  private onFinal(cb: EngineCallbacks, sk: string, traceId?: string) {
+    this.freezeText(cb, sk);
+    this.freezeReasoning(cb, sk);
+    const s = this.streamFor(sk);
+    s.streaming = false;
+    const total = now() - s.userSendTime;
+    cb.setMetrics((m) => ({ ...m, total: Math.round(total) }));
+    // #78：runId 已由 onMetric 直接写到 msg。这里 final 自带 trace_id 时**覆盖**——
+    // 因为 final 是 run 终结的权威信号，server 通常会用跟 metric 一致的值，
+    // 但若 server 重新生成（比如同一 turn 多个 metric 中间换 trace），final 的
+    // 才是 run 真正的 ID。
+    if (traceId) {
+      cb.setMsgs((prev) => {
+        for (let i = prev.length - 1; i >= 0; i--) {
+          const m = prev[i];
+          if (m.role !== "assistant") continue;
+          const next = [...prev];
+          next[i] = { ...m, runId: traceId };
+          return next;
+        }
+        return prev;
+      });
+    }
+    // 不再有 s.currentMetric = null —— 那个字段已删。
   }
 
-  private onCard(data: Record<string, any>) {
-    this.freezeText();
-    this.appendChild({
+  private onCard(cb: EngineCallbacks, sk: string, data: Record<string, any>) {
+    this.freezeText(cb, sk);
+    this.appendChild(cb, sk, {
       id: nextId(),
       kind: "note",
       text: "card · " + truncate(JSON.stringify(data), 200),
     });
   }
 
-  private onError(code: string, msg: string) {
-    this.freezeText();
-    this.freezeReasoning();
-    this.appendChild({ id: nextId(), kind: "error", text: code + " — " + msg });
-    this.cb.setStatus("error");
+  private onError(cb: EngineCallbacks, sk: string, code: string, msg: string) {
+    this.freezeText(cb, sk);
+    this.freezeReasoning(cb, sk);
+    this.appendChild(cb, sk, { id: nextId(), kind: "error", text: code + " — " + msg });
+    cb.setStatus("error");
   }
 
   // ---- 结构性块列表变更 ----
+  // setMsgs 由 cb 提供，cb 已按 dispatch / startTurn 的 sk 路由，写入 sessionStates[sk]。
+  // #78：cb 是显式参数，不再读 this.cb —— engine 实例完全 stateless。
 
-  private appendChild(child: Child) {
-    this.cb.setMsgs((prev) => {
+  private appendChild(cb: EngineCallbacks, sk: string, child: Child) {
+    void sk; // 参数留作可读性标注（这条 child 属于哪个 session）
+    cb.setMsgs((prev) => {
       const next = [...prev];
       const last = next[next.length - 1];
       if (last && last.role === "assistant") {
@@ -402,8 +569,9 @@ export class StreamEngine {
     });
   }
 
-  private patchChild(id: string, patch: Partial<Child>) {
-    this.cb.setMsgs((prev) =>
+  private patchChild(cb: EngineCallbacks, sk: string, id: string, patch: Partial<Child>) {
+    void sk;
+    cb.setMsgs((prev) =>
       prev.map((m) =>
         m.role !== "assistant"
           ? m
@@ -418,90 +586,88 @@ export class StreamEngine {
   // ---- 流式重绘 ----
   // 固定 30fps（不用 rAF），rAF 在 120Hz 屏上每秒重画 120 次 markdown 全量，浪费。
   // 增量写：只把"本帧从 queue 解锁"的字符串 append 到 DOM，不重新解析整个 paintedBuf。
+  // 每个 stream 独立 scheduleFlush —— timer 也存到 stream 上，避免两个 session 互踩。
 
-  private flushTimer: number | null = null;
-  private mergeTimer: number | null = null;
-
-  private scheduleFlush() {
-    if (this.flushTimer != null) return;
-    this.flushTimer = window.setTimeout(() => {
-      this.flushTimer = null;
-      this.flush();
+  private scheduleFlush(stream: PerSessionStream) {
+    if (stream.flushTimer != null) return;
+    stream.flushTimer = window.setTimeout(() => {
+      stream.flushTimer = null;
+      this.flush(stream);
     }, TICK_MS);
   }
 
-  private flush() {
-    if (this.reasoningEls) {
-      this.reasoningEls.body.innerHTML = esc(this.reasoningBuf) + CARET;
-      const dur = now() - this.reasoningStart;
-      const meta = this.reasoningEls.head.querySelector(".meta");
-      if (meta) meta.textContent = this.reasoningBuf.length + " chars · " + fmtMs(dur);
+  private flush(stream: PerSessionStream) {
+    if (stream.reasoningEls) {
+      stream.reasoningEls.body.innerHTML = esc(stream.reasoningBuf) + CARET;
+      const dur = now() - stream.reasoningStart;
+      const meta = stream.reasoningEls.head.querySelector(".meta");
+      if (meta) meta.textContent = stream.reasoningBuf.length + " chars · " + fmtMs(dur);
     }
-    if (this.assistantEl) this.paintText();
-    this.requestScrollToBottom();
+    if (stream.assistantEl) this.paintText(stream);
+    if (stream.scrollEl) stream.scrollRequest = true;
   }
 
-  private paintText() {
-    const el = this.assistantEl;
+  private paintText(stream: PerSessionStream) {
+    const el = stream.assistantEl;
     if (!el) return;
-    if (!this.streaming || this.tokenBuf.length === 0) {
+    if (!stream.streaming || stream.tokenBuf.length === 0) {
       // 流结束（被 freeze 调过）：最后一次渲染（一次性 innerHTML），DOM 收敛到稳定状态
-      this.consolidateFreshSpans();
-      el.innerHTML = renderMarkdown(this.paintedBuf);
+      this.consolidateFreshSpans(stream);
+      el.innerHTML = renderMarkdown(stream.paintedBuf);
       this.appendCaret(el);
       return;
     }
 
     // 1) 推进虚拟播放头
     const t = now();
-    if (this.jbLastFlushAt === 0) this.jbLastFlushAt = t;
-    const dtMs = Math.max(0, t - this.jbLastFlushAt);
-    this.jbLastFlushAt = t;
-    this.jbPlayhead += dtMs;
+    if (stream.jbLastFlushAt === 0) stream.jbLastFlushAt = t;
+    const dtMs = Math.max(0, t - stream.jbLastFlushAt);
+    stream.jbLastFlushAt = t;
+    stream.jbPlayhead += dtMs;
 
     // 2) 积压过大时跳过积压（drain）
-    if (this.jbQueue.length > 0) {
-      const headLag = this.jbPlayhead - this.jbQueue[0].arriveAt;
+    if (stream.jbQueue.length > 0) {
+      const headLag = stream.jbPlayhead - stream.jbQueue[0].arriveAt;
       if (headLag > MAX_BUFFER_MS) {
-        this.jbPlayhead = this.jbQueue[0].arriveAt + TARGET_BUFFER_MS;
+        stream.jbPlayhead = stream.jbQueue[0].arriveAt + TARGET_BUFFER_MS;
       }
     }
 
     // 3) 消费 queue：每 tick 最多解锁 CHARS_PER_TICK 个字符
     let released = "";
-    for (let i = 0; i < CHARS_PER_TICK && this.jbQueue.length > 0 && this.jbQueue[0].arriveAt <= this.jbPlayhead; i++) {
-      released += this.jbQueue.shift()!.ch;
+    for (let i = 0; i < CHARS_PER_TICK && stream.jbQueue.length > 0 && stream.jbQueue[0].arriveAt <= stream.jbPlayhead; i++) {
+      released += stream.jbQueue.shift()!.ch;
     }
     if (released.length === 0) {
-      if (this.jbQueue.length > 0) this.scheduleFlush();
+      if (stream.jbQueue.length > 0) this.scheduleFlush(stream);
       return;
     }
 
     // 4) 累加到 paintedBuf
-    this.paintedBuf += released;
-    this.painted = this.paintedBuf.length;
+    stream.paintedBuf += released;
+    stream.painted = stream.paintedBuf.length;
 
     // 5) 代理对守卫
-    if (this.painted > 0 && this.paintedBuf.length > this.painted) {
-      const tail = this.paintedBuf.charCodeAt(this.painted - 1);
+    if (stream.painted > 0 && stream.paintedBuf.length > stream.painted) {
+      const tail = stream.paintedBuf.charCodeAt(stream.painted - 1);
       if (tail >= 0xd800 && tail <= 0xdbff) {
-        this.painted--;
-        this.paintedBuf = this.paintedBuf.slice(0, this.painted);
+        stream.painted--;
+        stream.paintedBuf = stream.paintedBuf.slice(0, stream.painted);
         released = released.slice(0, released.length - 1);
       }
     }
 
     // 6) 单字淡入写入：每个新解锁的字符包成 span.ch.fresh，CSS animation 渐入
-    this.appendFreshChars(el, released);
+    this.appendFreshChars(stream, el, released);
 
     // 7) 旧 fresh span 动画结束后合并成文本节点，控制 DOM 大小
-    this.mergeFinishedSpans(el);
+    this.mergeFinishedSpans(stream, el);
 
-    if (this.jbQueue.length > 0) this.scheduleFlush();
+    if (stream.jbQueue.length > 0) this.scheduleFlush(stream);
   }
 
   // 把刚解锁的字符追加为 fresh span（带淡入动画）
-  private appendFreshChars(el: HTMLElement, chars: string) {
+  private appendFreshChars(stream: PerSessionStream, el: HTMLElement, chars: string) {
     if (!chars) return;
     const caret = el.querySelector(".caret");
     if (caret) caret.remove();
@@ -509,7 +675,7 @@ export class StreamEngine {
     const host = el.lastElementChild as HTMLElement | null;
     // 跨越 markdown 块边界（\n\n）→ 整段重渲
     if (/\n\n/.test(chars) || !host || host.tagName.toLowerCase() !== "p") {
-      el.innerHTML = renderMarkdown(this.paintedBuf);
+      el.innerHTML = renderMarkdown(stream.paintedBuf);
       this.appendCaret(el);
       return;
     }
@@ -519,7 +685,7 @@ export class StreamEngine {
       span.className = "ch fresh";
       span.textContent = ch;
       host.appendChild(span);
-      this.freshSpans.push(span);
+      stream.freshSpans.push(span);
     }
     this.appendCaret(el);
   }
@@ -527,23 +693,23 @@ export class StreamEngine {
   // 把动画已结束的 fresh span 合并成文本节点（释放 DOM）
   // 通过 animationend 事件在每个 span 上处理更优雅，但简单起见用延迟合并：
   // 200ms 后（动画结束）所有未合并的 fresh span 一起合并。
-  private mergeFinishedSpans(el: HTMLElement) {
-    if (this.freshSpans.length === 0) return;
-    if (this.mergeTimer != null) return;
-    this.mergeTimer = window.setTimeout(() => {
-      this.mergeTimer = null;
-      this.consolidateFreshSpans();
+  private mergeFinishedSpans(stream: PerSessionStream, el: HTMLElement) {
+    if (stream.freshSpans.length === 0) return;
+    if (stream.mergeTimer != null) return;
+    stream.mergeTimer = window.setTimeout(() => {
+      stream.mergeTimer = null;
+      this.consolidateFreshSpans(stream);
     }, 220); // CSS animation ~180ms
   }
 
-  private consolidateFreshSpans() {
-    if (this.freshSpans.length === 0) return;
+  private consolidateFreshSpans(stream: PerSessionStream) {
+    if (stream.freshSpans.length === 0) return;
     // 找到 fresh span 的父节点（通常是 .stream > p），把每个 span 替换成 text node
-    for (const span of this.freshSpans) {
+    for (const span of stream.freshSpans) {
       if (!span.parentNode) continue;
       span.parentNode.replaceChild(document.createTextNode(span.textContent || ""), span);
     }
-    this.freshSpans = [];
+    stream.freshSpans = [];
   }
 
   private appendCaret(el: HTMLElement) {
@@ -557,34 +723,45 @@ export class StreamEngine {
     host.appendChild(c);
   }
 
-  private freezeText() {
-    if (this.curTextId != null && this.tokenBuf) {
-      this.patchChild(this.curTextId, { text: this.tokenBuf });
+  private freezeText(cb: EngineCallbacks, sk: string) {
+    const s = this.streamFor(sk);
+    if (s.curTextId != null && s.tokenBuf) {
+      this.patchChild(cb, sk, s.curTextId, { text: s.tokenBuf });
     }
-    this.curTextId = null;
-    this.assistantEl = null;
-    this.tokenBuf = "";
-    this.painted = 0;
-    this.paintedBuf = "";
-    this.jbQueue = [];
-    this.jbPlayhead = 0;
-    this.jbLastFlushAt = 0;
-    this.freshSpans = [];
-    if (this.mergeTimer != null) { clearTimeout(this.mergeTimer); this.mergeTimer = null; }
-    this.streaming = false;
+    s.curTextId = null;
+    s.assistantEl = null;
+    s.tokenBuf = "";
+    s.painted = 0;
+    s.paintedBuf = "";
+    s.jbQueue = [];
+    s.jbPlayhead = 0;
+    s.jbLastFlushAt = 0;
+    s.freshSpans = [];
+    if (s.mergeTimer != null) { clearTimeout(s.mergeTimer); s.mergeTimer = null; }
+    s.streaming = false;
   }
 
-  private freezeReasoning() {
-    if (this.curReasoningId != null && this.reasoningBuf) {
-      this.patchChild(this.curReasoningId, { text: this.reasoningBuf });
+  private freezeReasoning(cb: EngineCallbacks, sk: string) {
+    const s = this.streamFor(sk);
+    if (s.curReasoningId != null && s.reasoningBuf) {
+      this.patchChild(cb, sk, s.curReasoningId, { text: s.reasoningBuf });
     }
-    this.curReasoningId = null;
-    this.reasoningEls = null;
-    this.reasoningBuf = "";
-    this.reasoningStart = 0;
+    s.curReasoningId = null;
+    s.reasoningEls = null;
+    s.reasoningBuf = "";
+    s.reasoningStart = 0;
   }
 
-  private requestScrollToBottom() {
-    this.scrollRequest = true;
+  /** 外部触发一次「请滚到底」请求。
+   *
+   * 用法：App 启动时若 loadHistories() 已有内容（不是全新空会话），
+   * 调用一次，使 Conversation 在 mount 后滚到最下方。
+   * 后续 flush 也会自动触发，正常流式响应不被影响。
+   */
+  requestScrollToBottom(sessionKey: string) {
+    // #78：必须由调用方显式传 sessionKey —— 不再有 this.activeSessionKey。
+    // 不传 → 静默忽略（不再退回 __default__ 这种「猜默认」行为，避免误导）。
+    if (!sessionKey) return;
+    this.streamFor(sessionKey).scrollRequest = true;
   }
 }

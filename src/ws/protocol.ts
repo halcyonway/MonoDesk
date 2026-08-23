@@ -20,6 +20,45 @@ export interface ToolResultData {
   budget_id: string | null;
 }
 
+// 可观测性：Run / Turn / Span 节点，对应 MonoX core/observability/types.py 的 dict 形态。
+export interface TraceSpan {
+  span_id: string;
+  parent_id: string | null;
+  kind: "reasoning" | "act" | "compress";
+  name: string;
+  start_ts: number;
+  end_ts: number | null;
+  status: "ok" | "error" | "cancelled";
+  attributes: Record<string, any>;
+}
+
+export interface TraceTurn {
+  turn_id: string;
+  turn_idx: number;
+  spans: TraceSpan[];
+}
+
+export interface TraceRun {
+  run_id: string;
+  session_key: string;
+  user_text: string;
+  final_text: string | null;
+  start_ts: number;
+  end_ts: number | null;
+  status: "running" | "ok" | "error" | "cancelled";
+  turns: TraceTurn[];
+}
+
+export interface TraceRunSummary {
+  run_id: string;
+  session_key: string;
+  user_text: string;
+  start_ts: number;
+  end_ts: number | null;
+  status: string;
+  turn_count: number;
+}
+
 export interface Envelope<T = Record<string, unknown>> {
   v: number;
   type: string;
@@ -29,17 +68,23 @@ export interface Envelope<T = Record<string, unknown>> {
 }
 
 // 出站事件（MonoX → MonoDesk）
+// 可选字段 trace_id / turn_id 透传 MonoX 的可观测性 ID（additive，向后兼容）。
+//
+// 每个出站 event 的 data 都带 session_key（来自 MonoX RuntimeServer._outbound_consumer）——
+// 客户端用它把事件路由到正确的 sessionStates Map entry，避免「A 的 late event 写到 B 的视图」
+// 这类跨 session 污染。hello.data.session_key 是 MonoX 的 default_session_key，
+// 仅作为参考；实际活跃会话由 MonoDesk 本地管理（用户切会话时改）。
 export type MonoDeskEvent =
   | { type: "hello"; data: { session_key: string; model: string } }
-  | { type: "status"; data: { state: StatusState } }
-  | { type: "token"; data: { text: string } }
-  | { type: "reasoning"; data: { text: string } }
-  | { type: "tool_start"; data: { name: string; args: Record<string, unknown> } }
-  | { type: "tool_end"; data: { name: string; latency_ms: number; result: ToolResultData } }
-  | { type: "metric"; data: { metrics: Record<string, any> } }
-  | { type: "final"; data: { text: string; metrics: Record<string, any> } }
-  | { type: "card"; data: { data: Record<string, any> } }
-  | { type: "error"; data: { code: string; msg: string; retryable: boolean } };
+  | { type: "status"; data: { session_key: string; state: StatusState; trace_id?: string; turn_id?: string } }
+  | { type: "token"; data: { session_key: string; text: string } }
+  | { type: "reasoning"; data: { session_key: string; text: string } }
+  | { type: "tool_start"; data: { session_key: string; name: string; args: Record<string, unknown> } }
+  | { type: "tool_end"; data: { session_key: string; name: string; latency_ms: number; result: ToolResultData } }
+  | { type: "metric"; data: { session_key: string; metrics: Record<string, any>; trace_id?: string; turn_id?: string } }
+  | { type: "final"; data: { session_key: string; text: string; metrics: Record<string, any>; trace_id?: string } }
+  | { type: "card"; data: { session_key: string; data: Record<string, any> } }
+  | { type: "error"; data: { session_key: string; code: string; msg: string; retryable: boolean } };
 
 // 入站事件（MonoDesk → MonoX）
 export type InboundMessage =

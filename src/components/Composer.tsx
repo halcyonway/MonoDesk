@@ -47,7 +47,6 @@ export function Composer({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.shiftKey) return;
     // 输入法组词中按回车是「确认候选字母」，不是发送/停止。
     // isComposing 在部分 IME（尤其 mac 中文输入法）下会报 false，keyCode 229 才是可靠信号；
     // 另外组词中的回车 key 可能被报成 "Process" 而非 "Enter"。
@@ -60,6 +59,12 @@ export function Composer({
       return;
     }
     if (e.key === "Enter") {
+      // 修饰键决定 send vs newline：
+      //   Enter           → send（或 running 时 stop）
+      //   Shift+Enter     → newline（让浏览器走默认换行行为）
+      //   Cmd+Enter / Ctrl+Enter → send（与 macOS 系统快捷键直觉一致）
+      const isMetaSend = e.metaKey || e.ctrlKey;
+      if (e.shiftKey && !isMetaSend) return; // Shift+Enter：放行默认行为 → \n
       e.preventDefault();
       if (running) onStop();
       else submit();

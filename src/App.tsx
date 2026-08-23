@@ -316,6 +316,14 @@ export default function App() {
     if (key === session) switchSession(DEFAULT_SESSION_KEY);
   };
 
+  // 清除当前会话的聊天历史（只删 desk 本地，agent runtime 不支持删除会话）
+  const onClearSession = (key: string) => {
+    setSessionStates((s) => ({
+      ...s,
+      [key]: { ...s[key], msgs: [] },
+    }));
+  };
+
   const onReconnect = () => {
     wsRef.current?.reconnect();
   };
@@ -334,6 +342,7 @@ export default function App() {
         <TopBar
           theme={theme}
           onToggleTheme={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+          onClear={() => onClearSession(session)}
         />
         <div id="body">
           <Conversation

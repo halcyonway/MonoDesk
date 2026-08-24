@@ -79,7 +79,8 @@ export type MonoDeskEvent =
   | { type: "status"; data: { session_key: string; state: StatusState; trace_id?: string; turn_id?: string } }
   | { type: "token"; data: { session_key: string; text: string } }
   | { type: "reasoning"; data: { session_key: string; text: string } }
-  | { type: "tool_start"; data: { session_key: string; name: string; args: Record<string, unknown> } }
+  | { type: "tool_pending"; data: { session_key: string; call_id: string; name: string; tool_index: number; args_so_far: string } }
+  | { type: "tool_start"; data: { session_key: string; name: string; args: Record<string, unknown>; call_id?: string } }
   | { type: "tool_end"; data: { session_key: string; name: string; latency_ms: number; result: ToolResultData } }
   | { type: "metric"; data: { session_key: string; metrics: Record<string, any>; trace_id?: string; turn_id?: string } }
   | { type: "final"; data: { session_key: string; text: string; metrics: Record<string, any>; trace_id?: string } }
@@ -88,6 +89,12 @@ export type MonoDeskEvent =
 
 // 入站事件（MonoDesk → MonoX）
 export type InboundMessage =
-  | { type: "user_input"; data: { text: string; session_key?: string } }
+  | { type: "user_input"; data: { text: string; session_key?: string; attachments?: Attachment[] } }
   | { type: "interrupt"; data: Record<string, never> }
   | { type: "command"; data: { text: string } };
+
+export interface Attachment {
+  url: string;      // absolute HTTP URL pointing at MonoX's debug server (e.g. http://127.0.0.1:8768/debug/attachments/<uuid>.png) — backend serves the bytes for both <img> rendering and multimodalunderstand tool
+  name: string;     // original filename
+  mime: string;     // MIME type, e.g. "image/png"
+}

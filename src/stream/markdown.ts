@@ -21,7 +21,13 @@ function inline(s: string): string {
   s = esc(s);
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  // 顺序关键：裸 URL auto-link 必须**先于** image / link，否则会二次匹配 image src
+  // 或 link href 里的 URL（把已生成的 `<a href="URL">` 再嵌一层）。  先把 URL 包成
+  // `<a href="URL">URL</a>` 后，image/link regex 看不到 `[`，自然不匹配。
+  // 停在空白或 `)`（避免吃掉 inline 引用收尾的右括号，例如 `(看 https://x.com)`）。
+  s = s.replace(/(https?:\/\/[^\s)]+)(?=[.,;:!?'"]*(?:\s|$|<))/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy" />');
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   s = s.replace(/@@c(\d+)@@/g, (_m, i: string) => "<code>" + esc(codes[+i]) + "</code>");
   return s;
 }

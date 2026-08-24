@@ -15,7 +15,19 @@
 // （之前根因：所有字段都是 this.X 全局共享，A 没流完就切到 B 发 → A 的 token 写到 B 的 buffer）。
 
 import { CARET, esc, fmtMs, renderMarkdown, truncate } from "./markdown";
-import type { MonoDeskEvent, StatusState, ToolResultData } from "../ws/protocol";
+
+// partial args JSON → dict（容错：解析失败返回空对象）。
+// 用于 ToolPending 收到 args_so_far 但没 call_id 的回退路径。
+function _parseArgsString(s: string): Record<string, unknown> {
+  if (!s) return {};
+  try {
+    const v = JSON.parse(s);
+    return typeof v === "object" && v ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+import type { Attachment, MonoDeskEvent, StatusState, ToolResultData } from "../ws/protocol";
 
 type Setter<T> = (v: T | ((prev: T) => T)) => void;
 
@@ -30,12 +42,15 @@ export type Child =
       state: "running" | "done";
       result?: ToolResultData;
       latencyMs?: number;
+      // callId 用于把 ToolPending（先发的）和 ToolStart 配对成同一个块，避免双卡片。
+      // 缺失（老 server）也能跑 —— onToolStart 检测不到匹配就走「创建新块」路径。
+      callId?: string;
     }
   | { id: string; kind: "note"; text: string }
   | { id: string; kind: "error"; text: string };
 
 export type Msg =
-  | { id: string; role: "user"; text: string }
+  | { id: string; role: "user"; text: string; attachments?: Attachment[] }
   | {
       id: string;
       role: "assistant";
@@ -160,6 +175,11 @@ interface PerSessionStream {
 
   // 「请滚到底」标记
   scrollRequest: boolean;
+
+  // ToolPending → ToolStart 配对：call_id → 已建好的 child.id
+  // ToolPending 立刻创一个 running block，args 来了 ToolStart 找到它只更新 args，
+  // 不再新建第二个卡片。没匹配上（老 server 或 race）就当作 legacy 路径新建。
+  pendingToolByCallId: Map<string, string>;
 }
 
 function emptyStream(): PerSessionStream {
@@ -187,6 +207,7 @@ function emptyStream(): PerSessionStream {
     flushTimer: null,
     mergeTimer: null,
     scrollRequest: false,
+    pendingToolByCallId: new Map(),
   };
 }
 
@@ -256,13 +277,13 @@ export class StreamEngine {
 
   // ---- 用户动作 ----
 
-  startTurn(text: string, sessionKey: string) {
+  startTurn(text: string, sessionKey: string, attachments?: Attachment[]) {
     // startTurn 由 App 主动调用（不在 dispatch 路径上），所以没有 ev.data.session_key
     // 可读 —— 必须由 App 显式传入「这条 user_input 要进哪个 session」。
     const cb = this.router(sessionKey);
     cb.setMsgs((prev) => [
       ...prev,
-      { id: nextId(), role: "user", text },
+      { id: nextId(), role: "user", text, attachments },
       { id: nextId(), role: "assistant", children: [] },
     ]);
     this.resetTurn(cb, sessionKey);
@@ -332,8 +353,11 @@ export class StreamEngine {
       case "token":
         this.onToken(cb, sk, ev.data.text);
         break;
+      case "tool_pending":
+        this.onToolPending(cb, sk, ev.data.call_id, ev.data.name, ev.data.tool_index, ev.data.args_so_far);
+        break;
       case "tool_start":
-        this.onToolStart(cb, sk, ev.data.name, ev.data.args);
+        this.onToolStart(cb, sk, ev.data.name, ev.data.args, ev.data.call_id);
         break;
       case "tool_end":
         this.onToolEnd(cb, sk, ev.data.result, ev.data.latency_ms);
@@ -430,21 +454,75 @@ export class StreamEngine {
     this.scheduleFlush(s);
   }
 
-  private onToolStart(cb: EngineCallbacks, sk: string, name: string, args: Record<string, unknown>) {
+  private onToolStart(cb: EngineCallbacks, sk: string, name: string, args: Record<string, unknown>, callId?: string) {
     this.freezeText(cb, sk);
     this.freezeReasoning(cb, sk);
     const argsStr = Object.entries(args || {})
       .map(([k, v]) => k + "=" + JSON.stringify(v))
       .join(" ");
-    const id = nextId();
+    const argsDisplay = truncate(argsStr, 40);
     const s = this.streamFor(sk);
+
+    // 有 call_id + 之前有 ToolPending 创过块 → 找到它，只更新 args/name。
+    // 没有匹配（legacy server / race / 网络丢包）→ 走老路径新建块。
+    if (callId && s.pendingToolByCallId.has(callId)) {
+      const targetId = s.pendingToolByCallId.get(callId)!;
+      s.pendingToolByCallId.delete(callId);
+      s.curToolId = targetId;
+      cb.setMsgs((prev) =>
+        prev.map((m) =>
+          m.role !== "assistant"
+            ? m
+            : {
+                ...m,
+                children: m.children.map((c) =>
+                  c.id === targetId
+                    ? ({ ...c, name, args: argsDisplay, state: "running" } as Child)
+                    : c
+                ),
+              }
+        )
+      );
+      return;
+    }
+
+    const id = nextId();
     s.curToolId = id;
     this.appendChild(cb, sk, {
       id,
       kind: "tool",
       name,
-      args: truncate(argsStr, 40),
+      args: argsDisplay,
       state: "running",
+      callId,
+    });
+  }
+
+  private onToolPending(cb: EngineCallbacks, sk: string, callId: string, name: string, toolIndex: number, argsSoFar: string) {
+    // 收到 ToolPending 立刻创建一个 running 块（args 可能为空）。
+    // ToolStart 之后会带完整 args 过来配对 update，避免 args 出完之前 UI 是空的。
+    //
+    // 注意：不 freezeText / freezeReasoning —— ToolPending 通常和 token 流同帧到达，
+    // 强制 freeze 会把刚到的 token 切掉。ToolStart 再 freeze 就行。
+    void toolIndex; // 暂用不到；future: 并行 tool 时排序
+    if (!callId) {
+      // 没有 call_id（异常路径）→ 走 legacy：把 args_so_far 当完整 args 处理
+      this.onToolStart(cb, sk, name, _parseArgsString(argsSoFar));
+      return;
+    }
+    const s = this.streamFor(sk);
+    // 同 call_id 不重复创（防御性：server 偶尔重复发）
+    if (s.pendingToolByCallId.has(callId)) return;
+    const id = nextId();
+    s.curToolId = id;
+    s.pendingToolByCallId.set(callId, id);
+    this.appendChild(cb, sk, {
+      id,
+      kind: "tool",
+      name,
+      args: argsSoFar ? truncate(argsSoFar, 40) : "",
+      state: "running",
+      callId,
     });
   }
 

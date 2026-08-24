@@ -1,6 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import type { StatusState } from "../ws/protocol";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { StatusState, Attachment } from "../ws/protocol";
 import { fmtMs } from "../stream/markdown";
+
+const UPLOAD_URL =
+  (import.meta.env.VITE_DEBUG_URL ?? "http://127.0.0.1:8768") +
+  "/debug/attachments/upload";
+
+// Local-only preview item: blob URL stays in memory, never uploaded until send
+interface LocalPreview {
+  /** client-generated unique id */
+  id: string;
+  /** blob URL for <img src> */
+  objectUrl: string;
+  /** original filename */
+  name: string;
+  /** MIME type */
+  mime: string;
+  /** the actual File object, kept for upload */
+  file: File;
+}
 
 export function Composer({
   running,
@@ -14,15 +32,20 @@ export function Composer({
   status: StatusState;
   model: string;
   turnStartAt: number;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
 }) {
   const [value, setValue] = useState("");
+  const [previews, setPreviews] = useState<LocalPreview[]>([]);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [now, setNow] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropRef = useRef<HTMLDivElement>(null);
 
-  // 运行中的计时（供 footer 展示 elapsed）
+  // Running timer
   useEffect(() => {
     if (!running) return;
     setNow(performance.now());
@@ -30,7 +53,6 @@ export function Composer({
     return () => clearInterval(t);
   }, [running]);
 
-  // 输入框自适应高度
   const resize = () => {
     const ta = taRef.current;
     if (!ta) return;
@@ -38,18 +60,106 @@ export function Composer({
     ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
   };
 
-  const submit = () => {
+  // Add files: create blob object URLs for preview; don't upload yet.
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    if (!imageFiles.length) return;
+    const newPreviews: LocalPreview[] = imageFiles.map((file) => ({
+      id: Math.random().toString(36).slice(2),
+      objectUrl: URL.createObjectURL(file),
+      name: file.name,
+      mime: file.type || "image/png",
+      file,
+    }));
+    setPreviews((prev) => [...prev, ...newPreviews]);
+  }, []);
+
+  // Upload a single file and return the server Attachment, or null on failure
+  const uploadOne = useCallback(async (file: File): Promise<Attachment | null> => {
+    try {
+      const resp = await fetch(UPLOAD_URL, {
+        method: "POST",
+        body: file,
+        headers: { "Content-Type": file.type || "image/png" },
+      });
+      if (!resp.ok) {
+        // 别再静默吞：server 返回 4xx/5xx 时至少打到 console，让用户/调试者看见。
+        const text = await resp.text().catch(() => "");
+        console.error("attachment upload failed", resp.status, text);
+        return null;
+      }
+      const json = (await resp.json()) as { url: string; name: string; mime: string };
+      return { url: json.url, name: json.name, mime: json.mime };
+    } catch (err) {
+      // 网络层错误（CORS preflight 失败 / connection refused / abort）也打日志。
+      // 之前这里 return null 让用户根本看不到上传失败，现在调试能看见。
+      console.error("attachment upload error", err);
+      return null;
+    }
+  }, []);
+
+  // Drag & drop
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!dropRef.current?.contains(e.relatedTarget as Node)) setIsDragging(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  };
+
+  // Paste from clipboard
+  const onPaste = useCallback(
+    (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const imageItems = Array.from(items).filter((item) => item.type.startsWith("image/"));
+      if (!imageItems.length) return;
+      e.preventDefault();
+      const files = imageItems
+        .map((item) => item.getAsFile())
+        .filter(Boolean) as File[];
+      addFiles(files);
+    },
+    [addFiles]
+  );
+
+  useEffect(() => {
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [onPaste]);
+
+  // Remove a preview: revoke blob URL so memory is freed
+  const removePreview = (id: string) => {
+    setPreviews((prev) => {
+      const removed = prev.find((p) => p.id === id);
+      if (removed) URL.revokeObjectURL(removed.objectUrl);
+      return prev.filter((p) => p.id !== id);
+    });
+  };
+
+  const submit = async () => {
     const text = value.trim();
-    if (!text) return;
-    onSend(text);
+    if (!text && !previews.length) return;
+
+    // Upload all files in parallel, then send
+    const uploaded = await Promise.all(previews.map((p) => uploadOne(p.file)));
+    const attachments = uploaded.filter((a): a is Attachment => a !== null);
+
+    // Clean up blob URLs right after upload (success or not, they're no longer needed)
+    previews.forEach((p) => URL.revokeObjectURL(p.objectUrl));
+
+    onSend(text, attachments);
     setValue("");
+    setPreviews([]);
     requestAnimationFrame(resize);
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 输入法组词中按回车是「确认候选字母」，不是发送/停止。
-    // isComposing 在部分 IME（尤其 mac 中文输入法）下会报 false，keyCode 229 才是可靠信号；
-    // 另外组词中的回车 key 可能被报成 "Process" 而非 "Enter"。
     if (
       composingRef.current ||
       e.key === "Process" ||
@@ -59,80 +169,183 @@ export function Composer({
       return;
     }
     if (e.key === "Enter") {
-      // 修饰键决定 send vs newline：
-      //   Enter           → send（或 running 时 stop）
-      //   Shift+Enter     → newline（让浏览器走默认换行行为）
-      //   Cmd+Enter / Ctrl+Enter → send（与 macOS 系统快捷键直觉一致）
       const isMetaSend = e.metaKey || e.ctrlKey;
-      if (e.shiftKey && !isMetaSend) return; // Shift+Enter：放行默认行为 → \n
+      if (e.shiftKey && !isMetaSend) return;
       e.preventDefault();
       if (running) onStop();
-      else submit();
+      else void submit(); // submit is async but we don't await to avoid blocking
     }
   };
 
   const elapsed = running && turnStartAt > 0 ? fmtMs(now - turnStartAt) : "";
 
   return (
-    <div id="composer-wrap">
-      <div id="composer">
-        <div className="composer-main">
-          <textarea
-            id="input"
-            ref={taRef}
-            rows={1}
-            value={value}
-            placeholder="Message MonoX…"
-            onChange={(e) => {
-              setValue(e.target.value);
-              resize();
+    <>
+      {lightboxUrl && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(0,0,0,0.85)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "zoom-out",
+          }}
+          onClick={() => setLightboxUrl(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightboxUrl}
+            alt=""
+            style={{
+              maxWidth: "90vw",
+              maxHeight: "90vh",
+              objectFit: "contain",
+              borderRadius: 8,
             }}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
-            onCompositionEnd={() => {
-              composingRef.current = false;
-            }}
-            onKeyDown={onKeyDown}
           />
         </div>
-        <div className="composer-foot">
-          <div className="model-chip" title="模型由服务端配置，暂不支持切换">
-            <span>{model || "—"}</span>
+      )}
+
+      <div id="composer-wrap" ref={dropRef}>
+        <div id="composer">
+          {previews.length > 0 && (
+            <div className="attachment-preview">
+              {previews.map((p) => (
+                <div key={p.id} className="attachment-thumb">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p.objectUrl}
+                    alt={p.name}
+                    onClick={() => setLightboxUrl(p.objectUrl)}
+                  />
+                  <button
+                    className="attachment-remove"
+                    onClick={() => removePreview(p.id)}
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isDragging && (
+            <div className="drop-overlay">
+              <span>Drop image to attach</span>
+            </div>
+          )}
+
+          <div className="composer-main">
+            <textarea
+              id="input"
+              ref={taRef}
+              rows={1}
+              value={value}
+              placeholder="Message MonoX… (paste or drop images)"
+              onChange={(e) => {
+                setValue(e.target.value);
+                resize();
+              }}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+              }}
+              onKeyDown={onKeyDown}
+              onDragOver={onDragOver}
+              onDragLeave={onDragLeave}
+              onDrop={onDrop}
+            />
           </div>
-          <div id="composer-status">
-            {running ? (
-              <>
-                <span className="dot" />
-                <span>{status === "tooling" ? "calling tools" : status}</span>
-                {elapsed && <span className="dim">· {elapsed}</span>}
-              </>
-            ) : (
-              <span className="dim">ready</span>
-            )}
+          <div className="composer-foot">
+            <button
+              className="attach-btn"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach image"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="3" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files?.length) addFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+
+            <div
+              className="model-chip"
+              title="模型由服务端配置，暂不支持切换"
+            >
+              <span>{model || "—"}</span>
+            </div>
+            <div id="composer-status">
+              {running ? (
+                <>
+                  <span className="dot" />
+                  <span>
+                    {status === "tooling" ? "calling tools" : status}
+                  </span>
+                  {elapsed && (
+                    <span className="dim">· {elapsed}</span>
+                  )}
+                </>
+              ) : (
+                <span className="dim">ready</span>
+              )}
+            </div>
+            <button
+              id="send"
+              className={running ? "stop" : ""}
+              disabled={
+                !running && !value.trim() && !previews.length
+              }
+              onClick={() => (running ? onStop() : void submit())}
+              title={running ? "Interrupt" : "Send"}
+            >
+              {running ? (
+                <svg viewBox="0 0 24 24" width="15" height="15">
+                  <rect
+                    x="6"
+                    y="6"
+                    width="12"
+                    height="12"
+                    rx="2"
+                    fill="currentColor"
+                  />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path
+                    d="M3 12l18-8-8 18-2-7-8-3z"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
+            </button>
           </div>
-          <button
-            id="send"
-            className={running ? "stop" : ""}
-            disabled={!running && !value.trim()}
-            onClick={() => (running ? onStop() : submit())}
-            title={running ? "Interrupt" : "Send"}
-          >
-            {running ? (
-              <svg viewBox="0 0 24 24" width="15" height="15">
-                <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="16" height="16">
-                <path
-                  d="M3 12l18-8-8 18-2-7-8-3z"
-                  fill="currentColor"
-                />
-              </svg>
-            )}
-          </button>
         </div>
       </div>
-    </div>
+    </>
   );
 }

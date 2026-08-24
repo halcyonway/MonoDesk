@@ -8,7 +8,7 @@ import {
   type Step,
 } from "./stream/engine";
 import { fmtMs } from "./stream/markdown";
-import type { MonoDeskEvent, StatusState } from "./ws/protocol";
+import type { Attachment, MonoDeskEvent, StatusState } from "./ws/protocol";
 import { Conversation } from "./components/Conversation";
 import { Composer } from "./components/Composer";
 import { TopBar } from "./components/Chrome";
@@ -267,15 +267,18 @@ export default function App() {
 
   const running = status === "thinking" || status === "tooling" || status === "compressing";
 
-  const onSend = (text: string) => {
+  const onSend = (text: string, attachments?: Attachment[]) => {
     setTurnStartAt(performance.now());
     // 不打断 Runtime：Runtime 的 LoopEngine 在每个 turn 开始时会 drain input_queue，
     // 把新进来的 user_input 聚合到 messages 后再调 LLM。当前 turn 跑完后下一轮
     // 会自动处理这条（用户连续发多条时模型能看到完整上下文）。
     //
     // startTurn 需要 sessionKey —— App 知道这条 user_input 进哪个 session。
-    engine.startTurn(text, session);
-    wsRef.current?.send({ type: "user_input", data: { text, session_key: session } });
+    engine.startTurn(text, session, attachments);
+    wsRef.current?.send({
+      type: "user_input",
+      data: { text, session_key: session, attachments },
+    });
   };
 
   const onStop = () => {

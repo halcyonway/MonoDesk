@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { StreamEngine, Msg, Child } from "../stream/engine";
 import { fmtMs, renderMarkdown } from "../stream/markdown";
+import type { Attachment } from "../ws/protocol";
 
 // ---- 流式文本块 ----
 // 有 text（冻结 / 历史恢复）→ 静态渲染；无 text（正在流式）→ 引擎直接写 innerHTML。
@@ -87,6 +88,9 @@ const ReasonBlock = memo(function ReasonBlock({
 function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
   const [elapsed, setElapsed] = useState(0);
   const running = child.state === "running";
+  // "pending" = ToolPending 刚到、args 还没齐；UI 用 ellipsis 占位 + 不同 badge，
+  // 让用户立刻看到「开始调这个工具了」而不是「等」。
+  const pending = running && !child.args;
   const [open, setOpen] = useState(running);
 
   useEffect(() => {
@@ -102,18 +106,23 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
   }, [running]);
 
   const r = child.result;
-  const badge =
-    child.state === "running"
-      ? "running"
-      : r?.status === "ok"
-      ? "ok"
-      : r?.status ?? "done";
+  const badge = pending
+    ? "starting"
+    : child.state === "running"
+    ? "running"
+    : r?.status === "ok"
+    ? "ok"
+    : r?.status ?? "done";
 
   return (
-    <div className={"block tool " + (running ? "running" : "done") + (open ? " open" : "")}>
+    <div className={"block tool " + (running ? "running" : "done") + (open ? " open" : "") + (pending ? " pending" : "")}>
       <div className="block-head" onClick={() => setOpen((v) => !v)}>
         <span className="label"><span className="t-dot" />{child.name}</span>
-        {child.args && <span className="t-args">{child.args}</span>}
+        {child.args ? (
+          <span className="t-args">{child.args}</span>
+        ) : pending ? (
+          <span className="t-args t-args-pending">parsing args…</span>
+        ) : null}
         <span className="spacer" />
         <span className={"t-badge " + badge}>{badge}</span>
         <span className="t-latency">
@@ -188,7 +197,21 @@ function MsgView({
     return (
       <div className="msg user">
         <div className="label">You</div>
-        <div className="bubble">{msg.text}</div>
+        <div className="bubble">
+          {msg.text && <p>{msg.text}</p>}
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="msg-attachments">
+              {msg.attachments.map((a) => (
+                <div key={a.url} className="msg-attachment-thumb">
+                  {/* a.url 现在是绝对 HTTP URL（http://127.0.0.1:8768/debug/attachments/xxx）
+                      浏览器/Tauri/<img> 三方都能直接加载；不需要 file:// 前缀（跨 origin 被拦）。 */}
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={a.url} alt={a.name} title={a.name} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -268,7 +291,7 @@ export function Conversation({
   sessionKey: string;
   msgs: Msg[];
   engine: StreamEngine;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: Attachment[]) => void;
   onInspectRun?: (runId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);

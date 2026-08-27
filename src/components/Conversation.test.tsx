@@ -35,6 +35,7 @@ function makeEngine(): StreamEngine {
     setMetrics: () => {},
     setSteps: () => {},
     setModel: () => {},
+    setAvailableProviders: () => {},
     setConnected: () => {},
   }));
 }

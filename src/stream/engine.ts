@@ -88,6 +88,7 @@ export interface EngineCallbacks {
   setSteps: Setter<Step[]>;
   setConnected: Setter<boolean>;
   setModel: Setter<string>;
+  setAvailableProviders: Setter<string[]>;
 }
 
 export interface ReasoningEls {
@@ -343,6 +344,10 @@ export class StreamEngine {
         // 服务端报告的模型只在尚未选择时回填；session_key 由 MonoDesk 本地管理，
         // 不能覆盖用户当前选中的会话。
         cb.setModel((m) => m || ev.data.model);
+        // providers 列表来自 RuntimeServer 的 hello 帧
+        if (ev.data.providers) {
+          cb.setAvailableProviders(ev.data.providers);
+        }
         break;
       case "status":
         this.onStatus(cb, sk, ev.data.state);
@@ -363,7 +368,7 @@ export class StreamEngine {
         this.onToolEnd(cb, sk, ev.data.result, ev.data.latency_ms);
         break;
       case "metric":
-        this.onMetric(cb, sk, ev.data.metrics, ev.data.trace_id);
+        this.onMetric(cb, sk, ev.data.metrics, ev.data.trace_id, ev.data.model);
         break;
       case "final":
         this.onFinal(cb, sk, ev.data.trace_id);
@@ -537,8 +542,17 @@ export class StreamEngine {
   // 覆盖前一条。完全去掉 currentRunId / currentMetric 这种「跨事件累积状态」，
   // engine 实例本身不再持有任何「上次 event 影响这次 event」的字段。
   // 数据写到最近一条 assistant msg（一定是 metric 之前的某次 startTurn / ensureTurn 创建的）。
-  private onMetric(cb: EngineCallbacks, sk: string, m: Record<string, any>, traceId?: string) {
+  private onMetric(
+    cb: EngineCallbacks,
+    sk: string,
+    m: Record<string, any>,
+    traceId?: string,
+    model?: string
+  ) {
     this.freezeText(cb, sk);
+    // 真实调用 model 名：来自 MetricChunk.model（provider 解析后的真实字符串）。
+    // 切 provider 后下个 turn 即生效，覆盖 hello.model 默认值。
+    if (model) cb.setModel(model);
     const tok = m.tokens || {};
     const text =
       "step " + m.step_idx + " · " + fmtMs(m.latency_ms) + " · " +

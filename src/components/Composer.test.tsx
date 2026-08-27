@@ -18,6 +18,9 @@ function renderComposer(overrides: Partial<{
   running: boolean;
   status: StatusState;
   model: string;
+  providers: string[];
+  selectedProvider: string;
+  onSelectProvider: (p: string) => void;
   turnStartAt: number;
   onSend: (text: string) => void;
   onStop: () => void;
@@ -29,6 +32,9 @@ function renderComposer(overrides: Partial<{
       running={overrides.running ?? false}
       status={overrides.status ?? "idle"}
       model={overrides.model ?? "test-model"}
+      providers={overrides.providers ?? []}
+      selectedProvider={overrides.selectedProvider ?? ""}
+      onSelectProvider={overrides.onSelectProvider ?? (() => {})}
       turnStartAt={overrides.turnStartAt ?? 0}
       onSend={onSend}
       onStop={onStop}

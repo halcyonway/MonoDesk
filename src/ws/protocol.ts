@@ -75,21 +75,21 @@ export interface Envelope<T = Record<string, unknown>> {
 // 这类跨 session 污染。hello.data.session_key 是 MonoX 的 default_session_key，
 // 仅作为参考；实际活跃会话由 MonoDesk 本地管理（用户切会话时改）。
 export type MonoDeskEvent =
-  | { type: "hello"; data: { session_key: string; model: string } }
+  | { type: "hello"; data: { session_key: string; model: string; providers?: string[]; model_provider?: string } }
   | { type: "status"; data: { session_key: string; state: StatusState; trace_id?: string; turn_id?: string } }
   | { type: "token"; data: { session_key: string; text: string } }
   | { type: "reasoning"; data: { session_key: string; text: string } }
   | { type: "tool_pending"; data: { session_key: string; call_id: string; name: string; tool_index: number; args_so_far: string } }
   | { type: "tool_start"; data: { session_key: string; name: string; args: Record<string, unknown>; call_id?: string } }
   | { type: "tool_end"; data: { session_key: string; name: string; latency_ms: number; result: ToolResultData } }
-  | { type: "metric"; data: { session_key: string; metrics: Record<string, any>; trace_id?: string; turn_id?: string } }
+  | { type: "metric"; data: { session_key: string; metrics: Record<string, any>; trace_id?: string; turn_id?: string; model?: string } }
   | { type: "final"; data: { session_key: string; text: string; metrics: Record<string, any>; trace_id?: string } }
   | { type: "card"; data: { session_key: string; data: Record<string, any> } }
   | { type: "error"; data: { session_key: string; code: string; msg: string; retryable: boolean } };
 
 // 入站事件（MonoDesk → MonoX）
 export type InboundMessage =
-  | { type: "user_input"; data: { text: string; session_key?: string; attachments?: Attachment[] } }
+  | { type: "user_input"; data: { text: string; session_key?: string; attachments?: Attachment[]; meta?: Record<string, unknown> } }
   | { type: "interrupt"; data: Record<string, never> }
   | { type: "command"; data: { text: string } };
 

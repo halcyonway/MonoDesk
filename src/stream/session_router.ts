@@ -15,6 +15,7 @@ export interface SessionState {
   metrics: any;
   steps: any[];
   model: string;
+  availableProviders: string[];
   // 也保留 connected? —— 不。connected 是 WS 物理状态，与 session 无关，不进 Map。
 }
 
@@ -24,6 +25,7 @@ export interface RouterSetters {
   metrics: SessionState["metrics"];
   steps: SessionState["steps"];
   model: SessionState["model"];
+  availableProviders: SessionState["availableProviders"];
 }
 
 export type Setter<K extends keyof RouterSetters> = (
@@ -66,6 +68,7 @@ export function buildSessionRoutedSetters(
     metrics: setFor("metrics"),
     steps: setFor("steps"),
     model: setFor("model"),
+    availableProviders: setFor("availableProviders"),
   };
 }
 

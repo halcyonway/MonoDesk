@@ -107,6 +107,7 @@ const EMPTY_SESSION_STATE = {
   metrics: EMPTY_METRICS,
   steps: [] as Step[],
   model: "",
+  availableProviders: [] as string[],
 } satisfies Omit<SessionState, never>;
 
 function loadSessionStates(): Record<string, typeof EMPTY_SESSION_STATE> {
@@ -127,6 +128,9 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionItem[]>(() => loadSessions());
   // 当前页：chat（默认）或 skills。Sidebar 上的 rail 按钮切这个。
   const [currentPage, setCurrentPage] = useState<SidebarPage>("chat");
+  // 用户选中的模型 provider；空串 = 跟随服务端默认。
+  // 全局一份（跨 session 共享选择），下一个 user_input 的 meta 带给 Runtime。
+  const [selectedProvider, setSelectedProvider] = useState("");
   // 所有会话运行时状态都在这张 Map 里。视图状态完全 derive。
   const [sessionStates, setSessionStates] = useState<Record<string, SessionState>>(
     () => loadSessionStates()
@@ -158,12 +162,29 @@ export default function App() {
         setMetrics: routed.metrics as any,
         setSteps: routed.steps as any,
         setModel: routed.model as any,
+        setAvailableProviders: routed.availableProviders as any,
         setConnected, // 全局，不分 session
       };
     };
     engineRef.current = new StreamEngine(router);
   }
   const engine = engineRef.current;
+
+  // Runtime 级握手信息（hello 帧）：providers 列表 + 默认模型。
+  // hello 不属于任何 session —— 不进 sessionStates Map，直接放全局，
+  // 否则写进了 "default" entry 而当前视图是别的会话时永远看不到。
+  const [serverProviders, setServerProviders] = useState<string[]>([]);
+  const [helloModel, setHelloModel] = useState("");
+  const handleEvent = useCallback(
+    (ev: MonoDeskEvent) => {
+      if (ev.type === "hello") {
+        if (ev.data.providers) setServerProviders(ev.data.providers);
+        if (ev.data.model) setHelloModel((m) => m || ev.data.model);
+      }
+      engine.dispatch(ev);
+    },
+    [engine]
+  );
 
   // 视图状态完全 derive：active session 没 entry 就是空 default，
   // 绝不可能拿到上一个会话的内容。
@@ -173,6 +194,7 @@ export default function App() {
   const metrics: Metrics = view.metrics as Metrics;
   const steps: Step[] = view.steps;
   const model: string = view.model;
+  const availableProviders: string[] = view.availableProviders ?? [];
 
   // 本 session 累计 prompt cache 命中率（按 token 数加权）。
   // 只在 msg.tokens.cached > 0 时计入（缺字段 / 0 都不算，避免 0.0% 噪声）。
@@ -208,13 +230,13 @@ export default function App() {
       wsRef.current = w.__monodeskWs;
       // HMR 重新挂载时，重新接 engine / setConnected，否则旧 callback 指向旧 setState
       w.__monodeskWs.rebind({
-        onEvent: (ev: MonoDeskEvent) => engine.dispatch(ev),
+        onEvent: handleEvent,
         onConnectionChange: (open: boolean) => setConnected(open),
       });
       return;
     }
     const ws = new MonoDeskWS(WS_URL, {
-      onEvent: (ev) => engine.dispatch(ev),
+      onEvent: handleEvent,
       onConnectionChange: (open) => setConnected(open),
     });
     ws.connect();
@@ -224,7 +246,7 @@ export default function App() {
       // dev HMR：保留实例不关；prod：组件卸载时正常关闭
       if (!import.meta.env.DEV) ws.close();
     };
-  }, [engine]);
+  }, [engine, handleEvent]);
 
   // prod 真正卸载（页面关闭）时清掉 window 引用（dev 永不卸载就不需要）
   useEffect(() => {
@@ -277,7 +299,13 @@ export default function App() {
     engine.startTurn(text, session, attachments);
     wsRef.current?.send({
       type: "user_input",
-      data: { text, session_key: session, attachments },
+      data: {
+        text,
+        session_key: session,
+        attachments,
+        // 模型切换：选了 provider 就随请求透传，LlmProxy 自己解析；空串 = 服务端默认
+        meta: selectedProvider ? { model_provider: selectedProvider } : undefined,
+      },
     });
   };
 
@@ -369,7 +397,10 @@ export default function App() {
               <Composer
                 running={running}
                 status={status}
-                model={model}
+                model={helloModel || model}
+                providers={serverProviders}
+                selectedProvider={selectedProvider}
+                onSelectProvider={setSelectedProvider}
                 turnStartAt={turnStartAt}
                 onSend={onSend}
                 onStop={onStop}

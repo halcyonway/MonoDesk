@@ -17,6 +17,7 @@ type Setters = {
   metrics: Metrics;
   steps: Step[];
   model: string;
+  availableProviders: string[];
   connected: boolean;
 };
 
@@ -27,6 +28,7 @@ function makeEmptySetters(): Setters {
     metrics: { ttft: null, total: null, tps: null, prompt: null, completion: null },
     steps: [],
     model: "",
+    availableProviders: [],
     connected: false,
   };
 }
@@ -60,6 +62,9 @@ function makeCallbacks(defaultKey = "s1") {
       },
       setModel: (v) => {
         s.model = typeof v === "function" ? (v as any)(s.model) : v;
+      },
+      setAvailableProviders: (v) => {
+        s.availableProviders = typeof v === "function" ? (v as any)(s.availableProviders) : v;
       },
       setConnected: (v) => {
         shared.connected = typeof v === "function" ? (v as any)(shared.connected) : v;

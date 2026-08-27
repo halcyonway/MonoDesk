@@ -18,6 +18,7 @@ const EMPTY = {
   metrics: { ttft: null, total: null, tps: null, prompt: null, completion: null },
   steps: [],
   model: "",
+  availableProviders: [],
 };
 
 describe("buildSessionRoutedSetters", () => {

@@ -24,6 +24,9 @@ export function Composer({
   running,
   status,
   model,
+  providers,
+  selectedProvider,
+  onSelectProvider,
   turnStartAt,
   onSend,
   onStop,
@@ -31,6 +34,11 @@ export function Composer({
   running: boolean;
   status: StatusState;
   model: string;
+  /** Runtime hello 帧下发的可用 provider 名列表；空数组 → 不渲染选择器 */
+  providers: string[];
+  /** 当前选中的 provider；空串 = 跟随服务端默认 */
+  selectedProvider: string;
+  onSelectProvider: (p: string) => void;
   turnStartAt: number;
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
@@ -40,10 +48,22 @@ export function Composer({
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [now, setNow] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+
+  // 点击 picker 外部时关闭菜单
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!pickerRef.current?.contains(e.target as Node)) setPickerOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [pickerOpen]);
 
   // Running timer
   useEffect(() => {
@@ -293,12 +313,52 @@ export function Composer({
               }}
             />
 
-            <div
-              className="model-chip"
-              title="模型由服务端配置，暂不支持切换"
-            >
-              <span>{model || "—"}</span>
-            </div>
+            {providers.length > 0 ? (
+              <div className={"model-picker" + (pickerOpen ? " open" : "")} ref={pickerRef}>
+                <button
+                  className="model-picker-btn"
+                  onClick={() => setPickerOpen((o) => !o)}
+                  title={`当前: ${selectedProvider || model || "—"}（切换后下一个请求生效）`}
+                >
+                  <span>{selectedProvider || model || "—"}</span>
+                  <svg viewBox="0 0 10 6" width="9" height="6" fill="currentColor">
+                    <path d="M0 0l5 6 5-6z" />
+                  </svg>
+                </button>
+                {pickerOpen && (
+                  <div className="model-picker-menu">
+                    <div
+                      className={"model-picker-item" + (selectedProvider === "" ? " selected" : "")}
+                      onClick={() => {
+                        onSelectProvider("");
+                        setPickerOpen(false);
+                      }}
+                    >
+                      <span>default{model ? <small>{model}</small> : null}</span>
+                      {selectedProvider === "" && <span className="mp-check">✓</span>}
+                    </div>
+                    <div className="model-picker-sep" />
+                    {providers.map((p) => (
+                      <div
+                        key={p}
+                        className={"model-picker-item" + (selectedProvider === p ? " selected" : "")}
+                        onClick={() => {
+                          onSelectProvider(p);
+                          setPickerOpen(false);
+                        }}
+                      >
+                        <span>{p}</span>
+                        {selectedProvider === p && <span className="mp-check">✓</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="model-chip" title="模型由服务端配置">
+                <span>{model || "—"}</span>
+              </div>
+            )}
             <div id="composer-status">
               {running ? (
                 <>

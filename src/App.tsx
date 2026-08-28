@@ -14,6 +14,9 @@ import { Composer } from "./components/Composer";
 import { TopBar } from "./components/Chrome";
 import { Sidebar, type SidebarPage } from "./components/Sidebar";
 import { SkillsPage } from "./components/SkillsPage";
+import { TasksPage } from "./components/TasksPage";
+import { TaskDetailPage } from "./components/TaskDetailPage";
+import { tasksStore } from "./store/tasks";
 import { TraceDrawer } from "./components/TraceDrawer";
 import { TraceClient } from "./observability/client";
 import { SkillsClient } from "./skills/client";
@@ -51,6 +54,8 @@ function StatusBar({
   metrics,
   sessionCache,
   onReconnect,
+  runningTasks = 0,
+  onOpenTasks,
 }: {
   connected: boolean;
   model: string;
@@ -59,6 +64,8 @@ function StatusBar({
   // 没数据 → null（不显示，避免 0.0% 噪声）。
   sessionCache: { ratio: number; prompt: number; cached: number } | null;
   onReconnect: () => void;
+  runningTasks?: number;
+  onOpenTasks?: () => void;
 }) {
   const m: string[] = [];
   if (metrics.ttft != null) m.push("TTFT " + metrics.ttft + "ms");
@@ -83,7 +90,14 @@ function StatusBar({
         <span>{connected ? "connected" : "offline · reconnect"}</span>
         {model && <span>· {model}</span>}
       </div>
-      <div className="sb-right">{m.length ? m.join(" · ") : "ready"}</div>
+      <div className="sb-right">
+        {runningTasks > 0 && (
+          <button className="sb-tasks" onClick={onOpenTasks} title="open Tasks">
+            {runningTasks} task{runningTasks > 1 ? "s" : ""} running
+          </button>
+        )}
+        {m.length ? m.join(" · ") : "ready"}
+      </div>
     </footer>
   );
 }
@@ -126,8 +140,10 @@ export default function App() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [turnStartAt, setTurnStartAt] = useState(0);
   const [sessions, setSessions] = useState<SessionItem[]>(() => loadSessions());
-  // 当前页：chat（默认）或 skills。Sidebar 上的 rail 按钮切这个。
+  // 当前页：chat（默认）/ skills / tasks。Sidebar 上的 rail 按钮切这个。
   const [currentPage, setCurrentPage] = useState<SidebarPage>("chat");
+  // Tasks 页当前打开详情的 task（null = 列表页）
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   // 用户选中的模型 provider；空串 = 跟随服务端默认。
   // 全局一份（跨 session 共享选择），下一个 user_input 的 meta 带给 Runtime。
   const [selectedProvider, setSelectedProvider] = useState("");
@@ -180,6 +196,12 @@ export default function App() {
       if (ev.type === "hello") {
         if (ev.data.providers) setServerProviders(ev.data.providers);
         if (ev.data.model) setHelloModel((m) => m || ev.data.model);
+        // 每次（重）连后拉一次全量任务列表（增量靠后续 ws 推帧）
+        wsRef.current?.queryTaskList();
+      }
+      if (ev.type.startsWith("async_task_")) {
+        tasksStore.ingest(ev);
+        return; // async 帧不进主 Chat 流的 engine
       }
       engine.dispatch(ev);
     },
@@ -366,6 +388,12 @@ export default function App() {
     wsRef.current?.reconnect();
   };
 
+  // Chat 流 TaskBlock → Tasks 详情页的 cross-link
+  const onOpenTask = useCallback((taskId: string) => {
+    setActiveTaskId(taskId);
+    setCurrentPage("tasks");
+  }, []);
+
   return (
     <div id="app">
       <Sidebar
@@ -377,6 +405,7 @@ export default function App() {
         onCreateSession={onCreateSession}
         onDeleteSession={onDeleteSession}
         canCreate={sessions.length < MAX_SESSIONS}
+        runningTasks={tasksStore.runningCount()}
       />
       <div id="main-col">
         <TopBar
@@ -393,6 +422,7 @@ export default function App() {
                 engine={engine}
                 onSend={onSend}
                 onInspectRun={onInspectRun}
+                onOpenTask={onOpenTask}
               />
               <Composer
                 running={running}
@@ -406,11 +436,32 @@ export default function App() {
                 onStop={onStop}
               />
             </>
+          ) : currentPage === "tasks" ? (
+            activeTaskId ? (
+              <TaskDetailPage
+                taskId={activeTaskId}
+                ws={wsRef.current ?? null}
+                onBack={() => setActiveTaskId(null)}
+              />
+            ) : (
+              <TasksPage ws={wsRef.current ?? null} onOpenTask={setActiveTaskId} />
+            )
           ) : (
             <SkillsPage client={skillsClientRef.current} />
           )}
         </div>
-        <StatusBar connected={connected} model={model} metrics={metrics} sessionCache={sessionCache} onReconnect={onReconnect} />
+        <StatusBar
+          connected={connected}
+          model={model}
+          metrics={metrics}
+          sessionCache={sessionCache}
+          onReconnect={onReconnect}
+          runningTasks={tasksStore.runningCount()}
+          onOpenTasks={() => {
+            setActiveTaskId(null);
+            setCurrentPage("tasks");
+          }}
+        />
         <TraceDrawer
           runId={inspectRunId}
           sessionKey={session}

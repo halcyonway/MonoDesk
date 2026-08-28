@@ -85,13 +85,105 @@ export type MonoDeskEvent =
   | { type: "metric"; data: { session_key: string; metrics: Record<string, any>; trace_id?: string; turn_id?: string; model?: string } }
   | { type: "final"; data: { session_key: string; text: string; metrics: Record<string, any>; trace_id?: string } }
   | { type: "card"; data: { session_key: string; data: Record<string, any> } }
-  | { type: "error"; data: { session_key: string; code: string; msg: string; retryable: boolean } };
+  | { type: "error"; data: { session_key: string; code: string; msg: string; retryable: boolean } }
+  // ---- async task（wire 层专用帧，对应 MonoX wire_frames.ASYNC_TASK_OUTBOUND_TYPES） ----
+  | { type: "async_task_created"; data: AsyncTaskCreatedData }
+  | { type: "async_task_event"; data: AsyncTaskEventData }
+  | { type: "async_task_status"; data: AsyncTaskStatusData }
+  | { type: "async_task_list"; data: AsyncTaskListData }
+  | { type: "async_task_snapshot"; data: AsyncTaskSnapshotData };
 
 // 入站事件（MonoDesk → MonoX）
 export type InboundMessage =
   | { type: "user_input"; data: { text: string; session_key?: string; attachments?: Attachment[]; meta?: Record<string, unknown> } }
   | { type: "interrupt"; data: Record<string, never> }
-  | { type: "command"; data: { text: string } };
+  | { type: "command"; data: { text: string } }
+  | { type: "async_task_cancel"; data: { task_id: string; reason: "user" } }
+  | { type: "async_task_list_query"; data: { session_key: string; filter: { status?: string[] } | null } };
+  // 注：async_task_snapshot_query 是预留 type（MonoX spec 只声明 2 个 inbound），
+  // Phase 3 详情页用 list + 推流即可满足；实装时两侧同步加。
+
+// ---- async task 类型（与 MonoX spec/requirements/async-task.md 一字不差） ----
+
+export type AsyncTaskStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "timed_out"
+  | "interrupted";
+
+// interrupted 是 Runtime 重启时对 running task 补的终态，只出现在 list / snapshot
+export type AsyncTaskLiveStatus = Exclude<AsyncTaskStatus, "pending" | "running" | "interrupted">;
+
+export interface AsyncTaskSummary {
+  task_id: string;
+  kind: string;
+  description: string;
+  status: AsyncTaskStatus;
+  parent_session_key: string;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  timeout_sec: number;
+  meta: Record<string, unknown>;
+  final_text: string | null;
+  error: string | null;
+}
+
+export interface AsyncTaskCreatedData {
+  session_key: string;          // 父 session_key（Chat 流 cross-link 用）
+  task_id: string;
+  kind: string;
+  description: string;
+  meta: Record<string, unknown>;
+  parent_session_key: string;
+  timeout_sec: number;
+  created_at: number;
+}
+
+// child StreamEvent 的内嵌 payload：RuntimeServer 用 to_frame 序列化后剥掉信封，
+// 只剩 {"type", "data"}——data 里 session_key 是 child 的 sk，客户端通常忽略。
+export type AsyncTaskInnerEvent =
+  | { type: "status"; data: { session_key?: string; state: StatusState; trace_id?: string; turn_id?: string } }
+  | { type: "token"; data: { session_key?: string; text: string } }
+  | { type: "reasoning"; data: { session_key?: string; text: string } }
+  | { type: "tool_pending"; data: { session_key?: string; call_id: string; name: string; tool_index: number; args_so_far: string } }
+  | { type: "tool_start"; data: { session_key?: string; name: string; args: Record<string, unknown>; call_id?: string } }
+  | { type: "tool_end"; data: { session_key?: string; name: string; latency_ms: number; result: ToolResultData } }
+  | { type: "metric"; data: { session_key?: string; metrics: Record<string, any>; trace_id?: string; turn_id?: string; model?: string } }
+  | { type: "final"; data: { session_key?: string; text: string; metrics: Record<string, any>; trace_id?: string } }
+  | { type: "card"; data: { session_key?: string; data: Record<string, any> } }
+  | { type: "error"; data: { session_key?: string; code: string; msg: string; retryable: boolean } };
+
+export interface AsyncTaskEventData {
+  session_key: string;
+  task_id: string;
+  event: AsyncTaskInnerEvent;
+}
+
+export interface AsyncTaskStatusData {
+  session_key: string;
+  task_id: string;
+  status: AsyncTaskLiveStatus;
+  finished_at: number;
+  duration_sec: number;
+  final_text: string | null;
+  error: string | null;
+  cancel_reason: string | null;
+}
+
+export interface AsyncTaskListData {
+  session_key: string;
+  tasks: AsyncTaskSummary[];
+}
+
+export interface AsyncTaskSnapshotData {
+  session_key: string;
+  task: AsyncTaskSummary;
+  recent_events: Array<Record<string, unknown>>;
+}
 
 export interface Attachment {
   url: string;      // absolute HTTP URL pointing at MonoX's debug server (e.g. http://127.0.0.1:8768/debug/attachments/<uuid>.png) — backend serves the bytes for both <img> rendering and multimodalunderstand tool

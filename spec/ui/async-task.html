@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<title>MonoDesk · Async Task UI Preview</title>
+<style>
+  /* ===== 对齐 src/styles.css 的设计 token（light + dark） ===== */
+  :root {
+    --bg: #ffffff;
+    --bg-panel: #f7f7f5;
+    --bg-hover: #f1f1ef;
+    --bg-code: #f6f6f4;
+    --border: #ececea;
+    --border-strong: #dcdcd9;
+    --text: #1b1b1f;
+    --text-muted: #6b6b74;
+    --text-faint: #9c9ca4;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, 0.08);
+    --thinking: #b45309;
+    --thinking-bg: rgba(180, 83, 9, 0.06);
+    --tool: #0369a1;
+    --tool-bg: rgba(3, 105, 161, 0.05);
+    --ok: #16a34a;
+    --ok-bg: rgba(22, 163, 74, 0.06);
+    --error: #dc2626;
+    --error-bg: rgba(220, 38, 38, 0.06);
+    --warn: #d97706;
+    --warn-bg: rgba(217, 119, 6, 0.06);
+    --caret: #4f46e5;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  html[data-theme="dark"] {
+    --bg: #0f0f12;
+    --bg-panel: #16161a;
+    --bg-hover: #1e1e24;
+    --bg-code: #17171c;
+    --border: #222228;
+    --border-strong: #2e2e36;
+    --text: #e7e7ea;
+    --text-muted: #9a9aa3;
+    --text-faint: #6b6b74;
+    --accent: #818cf8;
+    --accent-soft: rgba(129, 140, 248, 0.1);
+    --thinking: #f0a34a;
+    --thinking-bg: rgba(240, 163, 74, 0.08);
+    --tool: #4ab3e6;
+    --tool-bg: rgba(74, 179, 230, 0.07);
+    --ok: #4ade80;
+    --ok-bg: rgba(74, 222, 128, 0.07);
+    --error: #f87171;
+    --error-bg: rgba(248, 113, 113, 0.07);
+    --warn: #fbbf24;
+    --warn-bg: rgba(251, 191, 36, 0.07);
+    --caret: #818cf8;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  code, .mono, pre { font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace; }
+  .faint { color: var(--text-faint); }
+  .muted { color: var(--text-muted); }
+  .small { font-size: 11px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-faint); font-weight: 500; }
+
+  /* ===== Preview top bar (only in this demo) ===== */
+  .preview-bar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 16px; align-items: center;
+    padding: 10px 16px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .preview-bar .label { font-weight: 600; color: var(--text-muted); }
+  .preview-bar a {
+    color: var(--text); text-decoration: none;
+    padding: 4px 10px; border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .preview-bar a:hover { background: var(--bg-hover); }
+  .preview-bar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .preview-bar button {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .preview-bar button:hover { background: var(--bg-hover); }
+
+  /* ===== App layout ===== */
+  #app { display: flex; height: calc(100vh - 41px); overflow: hidden; }
+  aside#sidebar {
+    width: 240px; flex: 0 0 240px;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .sidebar-nav { padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--border); }
+  .nav-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border-radius: 5px;
+    cursor: pointer; user-select: none;
+    color: var(--text-muted); font-size: 13px;
+  }
+  .nav-row:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-row.active { background: var(--bg-hover); color: var(--text); }
+  .nav-row svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .nav-row .badge {
+    margin-left: auto; font-size: 11px;
+    background: var(--accent-soft); color: var(--accent);
+    padding: 1px 6px; border-radius: 8px; font-weight: 600;
+    font-family: ui-monospace, monospace;
+  }
+  .sidebar-section-label {
+    padding: 14px 18px 6px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-faint); font-weight: 600;
+  }
+  .sidebar-empty { padding: 8px 18px; font-size: 12px; color: var(--text-faint); font-style: italic; }
+
+  main {
+    flex: 1; overflow: auto; padding: 24px 32px 60px;
+  }
+  .container { max-width: 760px; margin: 0 auto; }
+
+  /* ===== Page heading ===== */
+  .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .page-head h1 { font-size: 18px; font-weight: 600; margin: 0; }
+  .page-head .actions { margin-left: auto; display: flex; gap: 6px; }
+  .icon-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); padding: 5px 10px; border-radius: 4px;
+    cursor: pointer; font-size: 12px;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+  .icon-btn.primary { color: var(--accent); border-color: var(--accent); }
+  .icon-btn.primary:hover { background: var(--accent-soft); }
+  .icon-btn.danger { color: var(--error); border-color: var(--error); }
+  .icon-btn.danger:hover { background: var(--error-bg); }
+
+  /* ===== Task list item ===== */
+  .task-list { display: flex; flex-direction: column; gap: 8px; }
+  .task-card {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-rows: auto auto auto;
+    grid-template-areas: "status main actions" "status meta actions";
+    gap: 4px 12px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .task-card:hover { background: var(--bg-hover); }
+  .task-card .status-dot {
+    grid-area: status;
+    width: 10px; height: 10px; border-radius: 50%;
+    margin-top: 6px;
+    align-self: start; justify-self: center;
+  }
+  .task-card .status-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: pulse 2s ease-in-out infinite; }
+  .task-card .status-dot.completed { background: var(--ok); }
+  .task-card .status-dot.cancelled { background: var(--text-faint); }
+  .task-card .status-dot.failed { background: var(--error); }
+  .task-card .status-dot.timed_out { background: var(--warn); }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .task-card .main { grid-area: main; min-width: 0; }
+  .task-card .main .title-row {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px;
+  }
+  .task-card .task-id { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-muted); }
+  .task-card .kind-tag {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    background: var(--bg-panel); color: var(--text-muted);
+    border: 1px solid var(--border);
+    font-family: ui-monospace, monospace; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .task-card .description {
+    color: var(--text); font-size: 14px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .task-card .meta-row {
+    grid-area: meta; display: flex; flex-wrap: wrap; gap: 14px;
+    font-size: 12px; color: var(--text-faint); font-family: ui-monospace, monospace;
+    margin-top: 4px;
+  }
+  .task-card .meta-row .sep { color: var(--border-strong); }
+  .task-card .meta-row .progress {
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .task-card .progress-bar {
+    width: 60px; height: 3px; background: var(--bg-panel);
+    border-radius: 2px; overflow: hidden;
+  }
+  .task-card .progress-fill {
+    height: 100%; background: var(--accent); transition: width 0.3s;
+  }
+  .task-card .progress-fill.completed { background: var(--ok); }
+  .task-card .progress-fill.timed_out { background: var(--warn); }
+
+  .task-card .actions {
+    grid-area: actions;
+    display: flex; align-items: center; gap: 6px;
+    align-self: center;
+  }
+
+  /* ===== Status text inline (subtle) ===== */
+  .status-text {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  .status-text.running { color: var(--accent); }
+  .status-text.completed { color: var(--ok); }
+  .status-text.cancelled { color: var(--text-muted); }
+  .status-text.failed { color: var(--error); }
+  .status-text.timed_out { color: var(--warn); }
+
+  /* ===== Empty state ===== */
+  .empty {
+    text-align: center; padding: 60px 20px;
+    color: var(--text-faint); font-size: 13px;
+  }
+  .empty .emoji { font-size: 32px; opacity: 0.4; display: block; margin-bottom: 12px; }
+
+  /* ===== Task detail ===== */
+  .detail-head {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px; margin-bottom: 20px;
+  }
+  .detail-head .back {
+    color: var(--text-muted); font-size: 12px;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 4px;
+    margin-bottom: 12px; cursor: pointer;
+  }
+  .detail-head .back:hover { color: var(--accent); }
+  .detail-head .row1 { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .detail-head h1 {
+    font-size: 16px; font-weight: 600; margin: 0;
+    font-family: ui-monospace, monospace;
+  }
+  .detail-head .sub { color: var(--text-muted); font-size: 12px; font-family: ui-monospace, monospace; }
+  .detail-head .meta-table {
+    margin-top: 10px; display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 16px;
+    font-size: 12px;
+  }
+  .detail-head .meta-table .k { color: var(--text-faint); font-family: ui-monospace, monospace; }
+  .detail-head .meta-table .v { color: var(--text); font-family: ui-monospace, monospace; }
+
+  .detail-head .actions { margin-top: 14px; display: flex; gap: 8px; }
+
+  /* ===== Stream blocks (reuse src/components Conversation styles, simplified) ===== */
+  .block { margin: 14px 0; }
+  .thinking-block {
+    border-left: 2px solid var(--thinking);
+    background: var(--thinking-bg);
+    padding: 8px 12px; border-radius: 0 4px 4px 0;
+  }
+  .thinking-block .head {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--thinking); font-weight: 600; margin-bottom: 4px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .thinking-block .head .dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--thinking);
+  }
+  .thinking-block .body { font-style: italic; color: var(--text-muted); font-size: 13px; }
+  .thinking-block .body.live .dot { animation: pulse 2s ease-in-out infinite; }
+
+  .tool-block {
+    border-left: 2px solid var(--tool);
+    background: var(--tool-bg);
+    padding: 8px 12px; border-radius: 0 4px 4px 0;
+  }
+  .tool-block .head {
+    font-size: 11px; color: var(--tool); font-weight: 600;
+    font-family: ui-monospace, monospace;
+    display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  }
+  .tool-block .head .name { color: var(--tool); }
+  .tool-block .head .args { color: var(--text-muted); }
+  .tool-block .head .latency { margin-left: auto; color: var(--text-faint); }
+  .tool-block .body pre {
+    margin: 0; padding: 8px 10px;
+    background: var(--bg-code); border-radius: 4px;
+    font-size: 12px; color: var(--text);
+    overflow: hidden;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 120px; overflow-y: auto;
+  }
+  .tool-block .body .exit { font-size: 11px; color: var(--ok); margin-top: 4px; }
+  .tool-block .body .more {
+    color: var(--text-faint); font-size: 11px;
+    background: var(--bg-code); padding: 4px 10px; border-radius: 0 0 4px 4px;
+    text-align: center; cursor: pointer;
+  }
+  .tool-block .body .more:hover { color: var(--accent); }
+
+  .stream-block { padding: 4px 0; }
+  .stream-block .head {
+    font-size: 11px; color: var(--text-faint); margin-bottom: 4px;
+    font-family: ui-monospace, monospace;
+  }
+  .stream-block .body { color: var(--text); }
+  .stream-block .body .caret {
+    display: inline-block; width: 7px; height: 14px;
+    background: var(--caret); vertical-align: text-bottom;
+    margin-left: 2px; animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ===== Final summary card (completed state) ===== */
+  .final-card {
+    margin-top: 18px; padding: 14px 16px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-panel);
+  }
+  .final-card .head {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    font-weight: 600; margin-bottom: 8px;
+  }
+  .final-card .head.completed { color: var(--ok); }
+  .final-card .head.cancelled { color: var(--text-muted); }
+  .final-card .head.timed_out { color: var(--warn); }
+  .final-card .head.failed { color: var(--error); }
+  .final-card .head .icon { font-size: 14px; }
+  .final-card .summary { color: var(--text); font-size: 14px; }
+  .final-card .stats {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 18px; font-size: 11px; color: var(--text-faint);
+    font-family: ui-monospace, monospace;
+  }
+
+  /* ===== Chat conversation mock (for cross-link demo) ===== */
+  .chat-page { padding-top: 0; }
+  .turn { margin: 18px 0; }
+  .turn.user .bubble {
+    background: var(--accent-soft);
+    padding: 8px 14px; border-radius: 12px;
+    display: inline-block; max-width: 80%;
+  }
+  .turn.user .bubble::before {
+    content: "you"; font-size: 10px; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 0.04em; margin-right: 8px;
+  }
+  .turn.assistant .block { margin-left: 0; }
+  .turn .label {
+    font-size: 10px; color: var(--text-faint); margin-bottom: 4px;
+    text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+  }
+
+  /* ===== TaskBlock (cross-link in Chat) ===== */
+  .task-block {
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 10px 14px; border-radius: 0 6px 6px 0;
+  }
+  .task-block.cancelled { border-left-color: var(--text-faint); background: var(--bg-panel); }
+  .task-block.completed { border-left-color: var(--ok); background: var(--ok-bg); }
+  .task-block.failed, .task-block.timed_out { border-left-color: var(--error); background: var(--error-bg); }
+  .task-block .head {
+    display: flex; align-items: center; gap: 8px;
+    font-family: ui-monospace, monospace; font-size: 12px;
+  }
+  .task-block .head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .task-block .head .dot.running { animation: pulse 2s ease-in-out infinite; }
+  .task-block .head .dot.completed { background: var(--ok); }
+  .task-block .head .dot.cancelled { background: var(--text-faint); }
+  .task-block .head .name { color: var(--text); font-weight: 600; }
+  .task-block .head .args { color: var(--text-muted); }
+  .task-block .head .latency { margin-left: auto; color: var(--text-faint); }
+  .task-block .body { margin-top: 6px; font-size: 13px; }
+  .task-block .body .k { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .task-block .body .v { color: var(--text); font-family: ui-monospace, monospace; }
+  .task-block .body .desc { color: var(--text); margin-top: 4px; }
+  .task-block .body .link {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--border);
+    color: var(--accent); font-size: 12px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  .task-block .body .link:hover { text-decoration: underline; }
+  .task-block .status-text {
+    font-family: ui-monospace, monospace;
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    border: 1px solid currentColor;
+  }
+
+  /* ===== Status bar (footer) ===== */
+  .statusbar {
+    border-top: 1px solid var(--border);
+    padding: 6px 16px;
+    background: var(--bg-panel);
+    font-size: 11px; color: var(--text-faint);
+    display: flex; align-items: center; gap: 16px;
+    font-family: ui-monospace, monospace;
+  }
+  .statusbar .conn { color: var(--ok); display: flex; align-items: center; gap: 4px; }
+  .statusbar .conn::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok);
+  }
+  .statusbar .running-tasks {
+    color: var(--accent); cursor: pointer;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .statusbar .running-tasks:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<!-- ============== Preview-only top bar ============== -->
+<div class="preview-bar">
+  <span class="label">async-task preview</span>
+  <a href="#list">Tasks 列表</a>
+  <a href="#detail-running">详情 · running</a>
+  <a href="#detail-completed">详情 · completed</a>
+  <a href="#chat-crosslink">Chat cross-link</a>
+  <div class="right">
+    <button onclick="document.documentElement.dataset.theme='light'">light</button>
+    <button onclick="document.documentElement.dataset.theme='dark'">dark</button>
+  </div>
+</div>
+
+<div id="app">
+  <aside id="sidebar">
+    <nav class="sidebar-nav">
+      <div class="nav-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>
+        Chat
+      </div>
+      <div class="nav-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        Skills
+      </div>
+      <div class="nav-row active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Tasks<span class="badge">2</span>
+      </div>
+    </nav>
+    <div class="sidebar-section-label">Tasks</div>
+    <div class="sidebar-empty">no sidebar sub-content for tasks page</div>
+  </aside>
+
+  <main>
+    <!-- ========== §1 Tasks 列表 ========== -->
+    <section id="list" class="container">
+      <div class="page-head">
+        <h1>Tasks</h1>
+        <span class="status-text running">2 active · 3 finished</span>
+        <div class="actions">
+          <button class="icon-btn">↻ refresh</button>
+        </div>
+      </div>
+
+      <div class="task-list">
+        <!-- running -->
+        <div class="task-card">
+          <div class="status-dot running"></div>
+          <div class="main">
+            <div class="title-row">
+              <span class="task-id">t_4f9e_a1b2c3d4</span>
+              <span class="kind-tag">subagent</span>
+              <span class="status-text running">running</span>
+            </div>
+            <div class="description">review this PR for security issues and broken edge cases</div>
+          </div>
+          <div class="actions"><button class="icon-btn danger">cancel</button></div>
+          <div class="meta-row">
+            <span>parent: <span class="mono">default</span></span>
+            <span class="sep">·</span>
+            <span class="progress">
+              <span class="progress-bar"><span class="progress-fill" style="width:47%"></span></span>
+              47s / 30min
+            </span>
+            <span class="sep">·</span>
+            <span>meta: <span class="mono">{pr_url: "...", priority: "high"}</span></span>
+          </div>
+        </div>
+
+        <!-- running (2nd) -->
+        <div class="task-card">
+          <div class="status-dot running"></div>
+          <div class="main">
+            <div class="title-row">
+              <span class="task-id">t_7c2d_e8f9a0b1</span>
+              <span class="kind-tag">subagent</span>
+              <span class="status-text running">running</span>
+            </div>
+            <div class="description">research competitors' pricing models — 5 sub-queries in parallel</div>
+          </div>
+          <div class="actions"><button class="icon-btn danger">cancel</button></div>
+          <div class="meta-row">
+            <span>parent: <span class="mono">chat-42</span></span>
+            <span class="sep">·</span>
+            <span class="progress">
+              <span class="progress-bar"><span class="progress-fill" style="width:8%"></span></span>
+              12s / 30min
+            </span>
+            <span class="sep">·</span>
+            <span>meta: <span class="mono">{queries: 5, source: "web"}</span></span>
+          </div>
+        </div>
+
+        <!-- completed -->
+        <div class="task-card">
+          <div class="status-dot completed"></div>
+          <div class="main">
+            <div class="title-row">
+              <span class="task-id">t_5b0c_d5e6f7a8</span>
+              <span class="kind-tag">subagent</span>
+              <span class="status-text completed">completed</span>
+            </div>
+            <div class="description">extract auth helper from session_manager.py into core/auth.py</div>
+          </div>
+          <div class="actions"></div>
+          <div class="meta-row">
+            <span>parent: <span class="mono">chat-42</span></span>
+            <span class="sep">·</span>
+            <span class="progress">
+              <span class="progress-bar"><span class="progress-fill completed" style="width:100%"></span></span>
+              done in 12s
+            </span>
+            <span class="sep">·</span>
+            <span>3 turns · 4 tool calls · 2.1k tokens</span>
+          </div>
+        </div>
+
+        <!-- cancelled -->
+        <div class="task-card">
+          <div class="status-dot cancelled"></div>
+          <div class="main">
+            <div class="title-row">
+              <span class="task-id">t_8d1f_c4a5b6e7</span>
+              <span class="kind-tag">subagent</span>
+              <span class="status-text cancelled">cancelled</span>
+            </div>
+            <div class="description">run full test suite — taking too long, user aborted</div>
+          </div>
+          <div class="actions"></div>
+          <div class="meta-row">
+            <span>parent: <span class="mono">default</span></span>
+            <span class="sep">·</span>
+            <span class="progress">
+              <span class="progress-bar"><span class="progress-fill" style="width:27%; background: var(--text-faint)"></span></span>
+              cancelled at 8min
+            </span>
+            <span class="sep">·</span>
+            <span class="mono" style="color:var(--text-muted)">by user</span>
+          </div>
+        </div>
+
+        <!-- timed_out -->
+        <div class="task-card">
+          <div class="status-dot timed_out"></div>
+          <div class="main">
+            <div class="title-row">
+              <span class="task-id">t_9e2a_f1b2c3d4</span>
+              <span class="kind-tag">subagent</span>
+              <span class="status-text timed_out">timed out</span>
+            </div>
+            <div class="description">long benchmark — agent overrode timeout to 45min, hit 30min default cap</div>
+          </div>
+          <div class="actions"></div>
+          <div class="meta-row">
+            <span>parent: <span class="mono">default</span></span>
+            <span class="sep">·</span>
+            <span class="progress">
+              <span class="progress-bar"><span class="progress-fill timed_out" style="width:100%"></span></span>
+              30min / 30min
+            </span>
+            <span class="sep">·</span>
+            <span class="mono" style="color:var(--text-muted)">by timeout</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== §2 Task 详情 · running ========== -->
+    <section id="detail-running" class="container" style="margin-top:80px; padding-top:24px; border-top:1px dashed var(--border-strong);">
+      <div class="page-head">
+        <h1>Task detail · running</h1>
+      </div>
+
+      <div class="detail-head">
+        <a class="back">← back to Tasks</a>
+        <div class="row1">
+          <span class="status-text running">running</span>
+          <h1>t_4f9e_a1b2c3d4</h1>
+        </div>
+        <div class="sub">subagent · parent: <span class="mono">default</span> · 47s / 1800s timeout</div>
+        <div class="meta-table">
+          <span class="k">description</span>
+          <span class="v">review this PR for security issues and broken edge cases</span>
+          <span class="k">kind</span>
+          <span class="v">subagent</span>
+          <span class="k">parent_sk</span>
+          <span class="v">default</span>
+          <span class="k">meta.pr_url</span>
+          <span class="v">"https://github.com/anthropic/..."</span>
+          <span class="k">meta.priority</span>
+          <span class="v">"high"</span>
+          <span class="k">created_at</span>
+          <span class="v">1732000000.123</span>
+        </div>
+        <div class="actions">
+          <button class="icon-btn danger">cancel task</button>
+          <button class="icon-btn">copy task_id</button>
+        </div>
+      </div>
+
+      <!-- Streaming content (in-progress) -->
+      <div class="block thinking-block">
+        <div class="head"><span class="dot"></span>THINKING · 1.2s</div>
+        <div class="body live">让我先看 PR diff…</div>
+      </div>
+
+      <div class="block tool-block">
+        <div class="head">
+          <span class="name">bash</span>
+          <span class="args">gh pr diff 1234</span>
+          <span class="latency">214ms · ✓ exit 0</span>
+        </div>
+        <div class="body">
+          <pre>$ gh pr diff 1234
+diff --git a/auth.py b/auth.py
+@@ -42,6 +42,9 @@
+ def login(user, pw):
++    raw_query = f"SELECT * FROM users WHERE name='{user}' AND pw='{pw}'"
++    return db.execute(raw_query)
+
+ def register(user, pw):
+     return db.execute(</pre>
+        </div>
+      </div>
+
+      <div class="block stream-block">
+        <div class="head">streaming assistant</div>
+        <div class="body">看到一处 SQL injection 风险，建议改用参数化查询…<span class="caret"></span></div>
+      </div>
+
+      <div class="block tool-block">
+        <div class="head">
+          <span class="name">bash</span>
+          <span class="args">rg "raw_query" .</span>
+          <span class="latency">running…</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== §3 Task 详情 · completed ========== -->
+    <section id="detail-completed" class="container" style="margin-top:80px; padding-top:24px; border-top:1px dashed var(--border-strong);">
+      <div class="page-head">
+        <h1>Task detail · completed</h1>
+      </div>
+
+      <div class="detail-head">
+        <a class="back">← back to Tasks</a>
+        <div class="row1">
+          <span class="status-text completed">completed</span>
+          <h1>t_5b0c_d5e6f7a8</h1>
+        </div>
+        <div class="sub">subagent · parent: <span class="mono">chat-42</span> · done in 12s</div>
+        <div class="meta-table">
+          <span class="k">description</span>
+          <span class="v">extract auth helper from session_manager.py into core/auth.py</span>
+          <span class="k">kind</span>
+          <span class="v">subagent</span>
+          <span class="k">parent_sk</span>
+          <span class="v">chat-42</span>
+          <span class="k">created_at</span>
+          <span class="v">1732000123.456</span>
+          <span class="k">finished_at</span>
+          <span class="v">1732000135.789</span>
+        </div>
+      </div>
+
+      <!-- Full stream replay -->
+      <div class="block thinking-block">
+        <div class="head">THINKING · 0.4s</div>
+        <div class="body">看了一下 session_manager.py，auth 那段可以独立。</div>
+      </div>
+
+      <div class="block tool-block">
+        <div class="head">
+          <span class="name">read_tr_budget</span>
+          <span class="args">session_manager.py:42-80</span>
+          <span class="latency">128ms</span>
+        </div>
+        <div class="body"><pre>def authenticate(user, pw):
+    # bcrypt verify, returns session_token
+    ...
+</pre></div>
+      </div>
+
+      <div class="block stream-block">
+        <div class="head">assistant · step 1</div>
+        <div class="body">这段逻辑跟 session 状态无关，提取到 core/auth.py 干净。</div>
+      </div>
+
+      <div class="block tool-block">
+        <div class="head">
+          <span class="name">write</span>
+          <span class="args">core/auth.py</span>
+          <span class="latency">52ms · ✓</span>
+        </div>
+      </div>
+
+      <div class="block tool-block">
+        <div class="head">
+          <span class="name">edit</span>
+          <span class="args">session_manager.py</span>
+          <span class="latency">38ms · ✓</span>
+        </div>
+      </div>
+
+      <div class="block stream-block">
+        <div class="head">assistant · step 2</div>
+        <div class="body">完成。已将 authenticate() 移到 core/auth.py，session_manager.py 改为 import。</div>
+      </div>
+
+      <div class="block tool-block">
+        <div class="head">
+          <span class="name">bash</span>
+          <span class="args">uv run pytest tests/test_auth.py</span>
+          <span class="latency">3.2s · ✓ 8 passed</span>
+        </div>
+      </div>
+
+      <!-- Final summary -->
+      <div class="final-card">
+        <div class="head completed">
+          <span class="icon">✓</span> TASK COMPLETED · 12s · 4 tool calls · 3 turns · 2.1k tokens
+        </div>
+        <div class="summary">
+          提取完成。`core/auth.py` 现在包含 `authenticate()` 函数和 bcrypt 封装；
+          `session_manager.py` 改为 import。原 8 个测试全过。
+        </div>
+        <div class="stats">
+          <span>prompt: 1.6k</span>
+          <span>completion: 0.5k</span>
+          <span>cached: 1.1k</span>
+          <span>cost: $0.012</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== §4 Chat 流里的 TaskBlock ========== -->
+    <section id="chat-crosslink" class="container chat-page" style="margin-top:80px; padding-top:24px; border-top:1px dashed var(--border-strong);">
+      <div class="page-head">
+        <h1>Chat · cross-link TaskBlock</h1>
+      </div>
+
+      <!-- user turn -->
+      <div class="turn user">
+        <span class="bubble">帮我审一下 PR #1234，重点看安全问题和边界 case</span>
+      </div>
+
+      <!-- assistant thinking -->
+      <div class="turn assistant">
+        <div class="block thinking-block">
+          <div class="head">THINKING · 0.3s</div>
+          <div class="body">审 PR 需要读 diff、跑测试、看上下文。开个 subagent 并行做，我同时继续。</div>
+        </div>
+
+        <!-- fork_task tool block (TaskBlock variant) -->
+        <div class="block">
+          <div class="task-block">
+            <div class="head">
+              <span class="dot running"></span>
+              <span class="name">fork_task</span>
+              <span class="args">description="review this PR..."</span>
+              <span class="latency">47s</span>
+              <span class="status-text running">running</span>
+            </div>
+            <div class="body">
+              <div><span class="k">task_id</span> <span class="v">t_4f9e_a1b2c3d4</span></div>
+              <div><span class="k">parent_sk</span> <span class="v">default</span></div>
+              <div><span class="k">timeout</span> <span class="v">1800s</span></div>
+              <div class="desc">review this PR for security issues and broken edge cases</div>
+              <div class="link">→ open in Tasks</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- More thinking while subagent runs -->
+        <div class="block thinking-block">
+          <div class="head">THINKING · 0.6s</div>
+          <div class="body">subagent 跑着，我先把相关几个文件 pull 下来准备后续动作。</div>
+        </div>
+
+        <div class="block tool-block">
+          <div class="head">
+            <span class="name">bash</span>
+            <span class="args">gh pr checkout 1234</span>
+            <span class="latency">1.4s · ✓</span>
+          </div>
+        </div>
+
+        <!-- async-task-result system event arrived -->
+        <div class="block" style="margin-left:0; padding-left:14px; border-left:2px solid var(--accent);">
+          <div class="muted small" style="margin-bottom:4px;">system · async-task-result</div>
+          <div class="muted" style="font-size:13px;">
+            task <span class="mono" style="color:var(--accent);">t_4f9e_a1b2c3d4</span> completed in 47s. summary: "Found 1 SQL injection in auth.py:42. Recommend parameterised query."
+          </div>
+        </div>
+
+        <!-- poll_task tool block (TaskBlock variant) -->
+        <div class="block">
+          <div class="task-block completed">
+            <div class="head">
+              <span class="dot completed"></span>
+              <span class="name">poll_task</span>
+              <span class="args">task_ids=["t_4f9e_a1b2c3d4"]</span>
+              <span class="latency">12ms</span>
+              <span class="status-text completed">ok</span>
+            </div>
+            <div class="body">
+              <div><span class="k">status</span> <span class="v">completed</span></div>
+              <div><span class="k">duration_sec</span> <span class="v">47.3</span></div>
+              <div><span class="k">final</span> <span class="v">"Found 1 SQL injection in auth.py:42..."</span></div>
+              <div class="link">→ open in Tasks</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Final answer -->
+        <div class="block stream-block">
+          <div class="head">assistant</div>
+          <div class="body">subagent 报告 PR #1234 在 <span class="mono">auth.py:42</span> 有一处 SQL injection。建议改用参数化查询。具体改动如下：
+            <pre style="margin:8px 0; padding:8px 10px; background:var(--bg-code); border-radius:4px; font-size:12px;">- raw_query = f"SELECT * FROM users WHERE name='{user}'"
++ cursor.execute("SELECT * FROM users WHERE name=%s", (user,))</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== §5 Status bar (footer) ========== -->
+    <section id="statusbar" class="container" style="margin-top:80px; padding-top:24px; border-top:1px dashed var(--border-strong);">
+      <div class="page-head">
+        <h1>Status bar · with running tasks indicator</h1>
+      </div>
+      <div class="statusbar" style="position:static; border:1px solid var(--border); border-radius:6px;">
+        <span class="conn">connected · MiniMax-M3</span>
+        <span>TTFT 312ms · 18 tok/s · 1.4s</span>
+        <span class="running-tasks">● 2 tasks running</span>
+        <span style="margin-left:auto;">default · prompt 1.2k / completion 0.3k</span>
+      </div>
+    </section>
+  </main>
+</div>
+
+</body>
+</html>

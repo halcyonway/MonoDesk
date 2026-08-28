@@ -8,7 +8,7 @@
 // IME 组词中（keyCode 229 / Process / isComposing）一律放行，绝不能误触发 send/stop。
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
 import type { StatusState } from "../ws/protocol";
 
@@ -50,11 +50,12 @@ function setValue(ta: HTMLTextAreaElement, v: string) {
 }
 
 describe("Composer keyboard shortcuts", () => {
-  it("Enter sends when not running", () => {
+  it("Enter sends when not running", async () => {
     const { ta, onSend } = renderComposer();
     setValue(ta, "hello");
     fireEvent.keyDown(ta, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("hello");
+    // submit() 是 async（attachments 上传管线），onSend 在微任务里触发
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("hello", []));
   });
 
   it("Enter triggers onStop when running", () => {
@@ -76,18 +77,19 @@ describe("Composer keyboard shortcuts", () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it("Cmd+Enter sends when not running (macOS convention)", () => {
+  it("Cmd+Enter sends when not running (macOS convention)", async () => {
     const { ta, onSend } = renderComposer();
     setValue(ta, "via-cmd");
     fireEvent.keyDown(ta, { key: "Enter", metaKey: true });
-    expect(onSend).toHaveBeenCalledWith("via-cmd");
+    // submit() 是 async（attachments 上传管线），onSend 在微任务里触发
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("via-cmd", []));
   });
 
-  it("Ctrl+Enter sends when not running (Win/Linux convention)", () => {
+  it("Ctrl+Enter sends when not running (Win/Linux convention)", async () => {
     const { ta, onSend } = renderComposer();
     setValue(ta, "via-ctrl");
     fireEvent.keyDown(ta, { key: "Enter", ctrlKey: true });
-    expect(onSend).toHaveBeenCalledWith("via-ctrl");
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("via-ctrl", []));
   });
 
   it("Cmd+Enter / Ctrl+Enter triggers onStop when running", () => {

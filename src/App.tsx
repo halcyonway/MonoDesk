@@ -332,10 +332,19 @@ export default function App() {
   };
 
   const onStop = () => {
-    // MonoX 的 LoopEngine 收到 interrupt 后会停在该 session 等待下一轮。
-    // interrupt 现在不带 session_key（wire 协议约定），MonoX 端按 default_session_key
-    // 解释 —— 跨 session 中断需要后续协议升级，#73 阶段先保留现状。
-    wsRef.current?.send({ type: "interrupt", data: {} });
+    // Optimistic update: 立即把该 session 切成 idle 态，LLM 真正中断后的
+    // StatusChange(idle) 帧到来时不再重复更新（状态相同）。这样用户点 STOP 后
+    // 能瞬间看到 thinking 消失，而不是等 5s 网络往返 + interrupt 处理。
+    setSessionStates((s) => {
+      const cur = s[session];
+      if (!cur || cur.status === "idle") return s;
+      return { ...s, [session]: { ...cur, status: "idle" } };
+    });
+    // 发到当前活跃 session（不能硬编码 default——agent 可能在 monodesk:xxx 里跑）
+    wsRef.current?.send({
+      type: "interrupt",
+      data: { session_key: session },
+    });
   };
 
   // 切会话：视图状态从 sessionStates derive，新会话没 entry 就是 EMPTY_SESSION_STATE

@@ -9,7 +9,7 @@ import type { SessionItem } from "../store/sessions";
 import { DEFAULT_SESSION_KEY } from "../store/sessions";
 import { SessionList } from "./Chrome";
 
-export type SidebarPage = "chat" | "skills";
+export type SidebarPage = "chat" | "skills" | "tasks";
 
 export function Sidebar({
   currentPage,
@@ -20,6 +20,7 @@ export function Sidebar({
   onCreateSession,
   onDeleteSession,
   canCreate,
+  runningTasks = 0,
 }: {
   currentPage: SidebarPage;
   onPageChange: (page: SidebarPage) => void;
@@ -29,6 +30,7 @@ export function Sidebar({
   onCreateSession: () => void;
   onDeleteSession: (key: string) => void;
   canCreate: boolean;
+  runningTasks?: number;
 }) {
   return (
     <aside id="sidebar">
@@ -47,6 +49,14 @@ export function Sidebar({
         >
           Skills
         </NavRow>
+        <NavRow
+          icon={<TaskIcon />}
+          active={currentPage === "tasks"}
+          onClick={() => onPageChange("tasks")}
+          badge={runningTasks > 0 ? runningTasks : undefined}
+        >
+          Tasks
+        </NavRow>
       </nav>
 
       {currentPage === "chat" ? (
@@ -59,7 +69,9 @@ export function Sidebar({
           canCreate={canCreate}
         />
       ) : (
-        <div className="sidebar-section-label">Skills</div>
+        <div className="sidebar-section-label">
+          {currentPage === "tasks" ? "Tasks" : "Skills"}
+        </div>
       )}
     </aside>
   );
@@ -74,11 +86,13 @@ function NavRow({
   icon,
   active,
   onClick,
+  badge,
   children,
 }: {
   icon: React.ReactNode;
   active: boolean;
   onClick: () => void;
+  badge?: number;
   children: React.ReactNode;
 }) {
   return (
@@ -89,6 +103,7 @@ function NavRow({
     >
       <span className="sidebar-nav-row-icon">{icon}</span>
       <span className="sidebar-nav-row-label">{children}</span>
+      {badge != null && <span className="nav-badge">{badge}</span>}
     </button>
   );
 }
@@ -110,6 +125,16 @@ function BookIcon() {
          strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4V4z" />
       <path d="M20 4h-3a3 3 0 0 0-3 3v13a2 2 0 0 1 2-2h4V4z" />
+    </svg>
+  );
+}
+
+function TaskIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+         strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
     </svg>
   );
 }

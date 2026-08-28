@@ -56,7 +56,7 @@ export interface AsyncTaskSummary {
   task_id: string;
   kind: string;
   description: string;
-  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "timed_out";
+  status: "pending" | "running" | "completed" | "failed" | "cancelled" | "timed_out" | "interrupted";
   parent_session_key: string;
   created_at: number;
   started_at: number | null;
@@ -117,6 +117,10 @@ export type InboundMessage =
   | AsyncTaskCancelMsg
   | AsyncTaskListQueryMsg
   | AsyncTaskSnapshotQueryMsg;
+
+// 注：async_task_snapshot_query 是 MonoDesk 侧预留 type；MonoX spec 的 inbound 只有
+// 2 个（cancel / list_query）。Phase 1 不实装 snapshot query——Runtime 不认识这个
+// type，按「未知 inbound 忽略」既有约定处理；TS union 先占位，Phase 3 实装时两侧同步。
 ```
 
 ### 1.3 hello 帧扩展
@@ -331,21 +335,22 @@ TaskDetailPage 内嵌一个独立的 `StreamEngine` 实例（区别于 Chat 流�
 
 - MonoDesk 不锁 MonoX 版本号。7 个新 type 是 additive，老 MonoDesk 收到 `async_task_*` 帧时 try/catch 忽略（既有约定）。
 - hello 帧 `subscribe_async_tasks` 字段是 additive，老 MonoX Runtime 收到未知字段忽略（既有约定）。
-- MonoDesk 收到的 `data.event` 是完整 StreamEvent dict，复用现有 `frame_to_stream_event` 反序列化逻辑（新增一个 case 分支处理「外层 data.task_id + data.event 内嵌」结构）。
+- MonoDesk 收到的 `data.event` 是完整 StreamEvent dict，复用 TS 侧现有的帧→StreamEvent 解析逻辑（`frame_to_stream_event` 是 MonoX Python 侧同名函数；TS 侧对齐它的语义），新增一个 case 分支处理「外层 data.task_id + data.event 内嵌」结构。
+- `interrupted` 是 Runtime 重启时给 running task 补的终态标记，只出现在 list / snapshot，不会有实时 `async_task_status` 帧。
 
 破坏性变更必须先改 `MonoX/spec/requirements/async-task.md` 和本文件，再动两侧实现。
 
 ---
 
-## 6. 实施 Phase（与 MonoX 侧同步）
+## 6. 实施 Phase（与 MonoX 侧同步）✅ 全部完成（2026-08-28）
 
-- **Phase 3.a**：ws/protocol.ts + ws/client.ts + store/tasks.ts（约 100 行 TS）
-- **Phase 3.b**：Sidebar 改 + TasksPage 列表
-- **Phase 3.c**：TaskDetailPage + 复用 StreamEngine
-- **Phase 3.d**：TaskBlock + Conversation 路由 + cross-link
-- **Phase 3.e**：footer 状态点 + Chat 状态更新联动
+- **Phase 3.a** ✅：ws/protocol.ts + ws/client.ts + store/tasks.ts
+- **Phase 3.b** ✅：Sidebar 改（tasks 页 + running 角标）+ TasksPage 列表
+- **Phase 3.c** ✅：TaskDetailPage + 复用 StreamEngine（独立实例回放 + onFrame 实时）
+- **Phase 3.d** ✅：TaskBlock + Conversation 路由 + cross-link
+- **Phase 3.e** ✅：StatusBar「N tasks running」入口 + Chat 状态更新联动
 
-每个 Phase 配 [ ] 单测（参照 `Conversation.test.tsx` / `SkillsPage.test.tsx` 的 React Testing Library 风格）。
+每个 Phase 配 [x] 单测：`src/store/tasks.test.ts` + `src/components/TasksPage.test.tsx`（RTL 风格）。
 
 ---
 

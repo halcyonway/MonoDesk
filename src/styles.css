@@ -1251,3 +1251,116 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
   border-color: var(--accent); color: var(--accent);
 }
 .sp-modal-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* =================== async tasks（spec/requirements/async-task.md §3） =================== */
+
+/* sidebar badge */
+.nav-badge {
+  margin-left: auto;
+  min-width: 16px; height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 600;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ---- Tasks 列表页 ---- */
+#tasks-page { max-width: 760px; margin: 0 auto; padding: 24px 28px; overflow-y: auto; }
+.page-head {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 16px;
+}
+.page-head h1 { font-size: 14px; font-weight: 600; margin: 0; }
+.task-page-status { font-size: 11px; color: var(--text-faint); }
+.task-page-status.running { color: var(--accent); }
+.page-head .actions { margin-left: auto; display: flex; gap: 6px; }
+.icon-btn {
+  border: 1px solid var(--border); background: var(--bg); color: var(--text-muted);
+  font-size: 11px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+}
+.icon-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.icon-btn.danger { color: var(--error); }
+.icon-btn.danger:hover { border-color: var(--error); }
+
+.tasks-empty { text-align: center; padding: 80px 0 0; }
+.task-list { display: flex; flex-direction: column; gap: 8px; }
+
+.task-card {
+  display: flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.task-card:hover { border-color: var(--border-strong); }
+.task-card-main {
+  flex: 1; display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 12px; background: none; border: none; text-align: left;
+  cursor: pointer; color: var(--text); font: inherit; min-width: 0;
+}
+.task-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  margin-top: 4px; background: var(--text-faint);
+}
+.task-dot.running { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.task-dot.completed { background: var(--ok); }
+.task-dot.failed { background: var(--error); }
+.task-dot.cancelled, .task-dot.interrupted { background: var(--text-faint); }
+.task-dot.timed_out { background: var(--thinking); }
+.task-card-body { min-width: 0; flex: 1; }
+.task-title-row { display: flex; align-items: center; gap: 8px; }
+.task-id { font-size: 11px; color: var(--text-muted); }
+.task-kind {
+  font-size: 10px; color: var(--tool);
+  background: var(--tool-bg); border-radius: 4px; padding: 1px 5px;
+}
+.task-status { font-size: 10px; color: var(--text-faint); }
+.task-status.running { color: var(--accent); }
+.task-status.completed { color: var(--ok); }
+.task-status.failed { color: var(--error); }
+.task-desc {
+  font-size: 12px; margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.task-meta-row { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.task-meta-row .sep { margin: 0 4px; color: var(--text-faint); }
+.faint { color: var(--text-faint); }
+.task-cancel {
+  border: none; border-left: 1px solid var(--border);
+  background: none; color: var(--error);
+  font-size: 11px; padding: 0 12px; cursor: pointer;
+}
+.task-cancel:hover { background: rgba(220, 38, 38, 0.05); }
+
+/* ---- Task 详情页 ---- */
+#task-detail { max-width: 860px; margin: 0 auto; padding: 24px 28px; display: flex; flex-direction: column; min-height: 0; }
+.task-detail-title { font-size: 13px; }
+.task-detail-sub { font-size: 11px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 5px; }
+.task-detail-sub .task-dot { margin-top: 0; }
+.task-detail-meta {
+  font-size: 11px; color: var(--text-muted);
+  border: 1px dashed var(--border); border-radius: 6px;
+  padding: 6px 10px; margin-bottom: 12px;
+}
+.task-detail-empty { color: var(--text-faint); font-size: 12px; padding: 48px 0; text-align: center; }
+
+/* ---- Chat 流里的 TaskBlock ---- */
+.block.tool.task .task-dot { margin-top: 5px; margin-left: 0; }
+.task-link {
+  background: none; border: none; padding: 0;
+  color: var(--accent); font-size: 11px; cursor: pointer;
+}
+.task-link:hover { text-decoration: underline; }
+.task-block-desc {
+  font-size: 11px; color: var(--text-muted);
+  padding: 0 12px 8px 26px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* ---- textual / 状态栏 ---- */
+.task-line { font-size: 11px; color: var(--text-muted); padding: 1px 0; }
+.sb-tasks {
+  background: none; border: none; padding: 0 6px;
+  color: var(--accent); font-size: 11px; cursor: pointer;
+}
+.sb-tasks:hover { text-decoration: underline; }

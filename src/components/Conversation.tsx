@@ -2,6 +2,10 @@ import { memo, useEffect, useRef, useState } from "react";
 import type { StreamEngine, Msg, Child } from "../stream/engine";
 import { fmtMs, renderMarkdown } from "../stream/markdown";
 import type { Attachment } from "../ws/protocol";
+import { TaskBlock } from "./TaskBlock";
+
+// fork/cancel/poll 走 TaskBlock（live 状态 + cross-link）；其余工具走通用 ToolBlock
+const TASK_TOOL_NAMES = new Set(["fork_task", "cancel_task", "poll_task"]);
 
 // ---- 流式文本块 ----
 // 有 text（冻结 / 历史恢复）→ 静态渲染；无 text（正在流式）→ 引擎直接写 innerHTML。
@@ -163,10 +167,12 @@ function ChildView({
   child,
   engine,
   sessionKey,
+  onOpenTask,
 }: {
   child: Child;
   engine: StreamEngine;
   sessionKey: string;
+  onOpenTask?: (taskId: string) => void;
 }) {
   switch (child.kind) {
     case "reasoning":
@@ -174,7 +180,11 @@ function ChildView({
     case "text":
       return <TextStream engine={engine} sessionKey={sessionKey} text={child.text} />;
     case "tool":
-      return <ToolBlock child={child} />;
+      return TASK_TOOL_NAMES.has(child.name) ? (
+        <TaskBlock child={child} onOpenTask={onOpenTask} />
+      ) : (
+        <ToolBlock child={child} />
+      );
     case "note":
       return <NoteBlock text={child.text} />;
     case "error":
@@ -187,11 +197,13 @@ function MsgView({
   engine,
   sessionKey,
   onInspectRun,
+  onOpenTask,
 }: {
   msg: Msg;
   engine: StreamEngine;
   sessionKey: string;
   onInspectRun?: (runId: string) => void;
+  onOpenTask?: (taskId: string) => void;
 }) {
   if (msg.role === "user") {
     return (
@@ -251,7 +263,13 @@ function MsgView({
       </div>
       <div className="stream">
         {msg.children.map((c) => (
-          <ChildView key={c.id} child={c} engine={engine} sessionKey={sessionKey} />
+          <ChildView
+            key={c.id}
+            child={c}
+            engine={engine}
+            sessionKey={sessionKey}
+            onOpenTask={onOpenTask}
+          />
         ))}
       </div>
     </div>
@@ -285,6 +303,7 @@ export function Conversation({
   engine,
   onSend,
   onInspectRun,
+  onOpenTask,
 }: {
   // #74: DOM 绑定（bindScroll / bindAssistant / bindReasoning）都按 sessionKey
   // 路由到对应 PerSessionStream。App 必须把当前 active session 传下来。
@@ -293,6 +312,7 @@ export function Conversation({
   engine: StreamEngine;
   onSend: (text: string, attachments?: Attachment[]) => void;
   onInspectRun?: (runId: string) => void;
+  onOpenTask?: (taskId: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -353,6 +373,7 @@ export function Conversation({
                 engine={engine}
                 sessionKey={sessionKey}
                 onInspectRun={onInspectRun}
+                onOpenTask={onOpenTask}
               />
             ))
         )}

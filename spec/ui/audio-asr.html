@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audio ASR Demo — MonoDesk</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f0f2f5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ===== Top bar (preview only) ===== */
+  .preview-bar {
+    background: #fffde7;
+    border-bottom: 1px solid #ffe082;
+    padding: 10px 16px;
+    font-size: 12px;
+    color: #7c6000;
+  }
+  .preview-bar strong { color: #5d4700; }
+  .preview-bar code {
+    background: rgba(0,0,0,0.05);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: ui-monospace, monospace;
+    font-size: 11.5px;
+  }
+
+  #main-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+    background: #fff;
+    border-left: 1px solid #e0e0e0;
+    border-right: 1px solid #e0e0e0;
+  }
+
+  /* ===== Conversation area ===== */
+  #conv {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px 8px;
+  }
+
+  .msg { margin-bottom: 18px; }
+  .msg-user {
+    background: #f5f7fa;
+    padding: 10px 14px;
+    border-radius: 12px;
+    display: inline-block;
+    max-width: 85%;
+  }
+  .msg-agent { color: #1b1b1f; line-height: 1.65; }
+  .msg-agent strong { font-weight: 600; }
+  .msg-agent em { color: #555; font-style: normal; }
+
+  /* ===== Audio attachment chip (user message 内的附件) ===== */
+  .attach-chip {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: #fff;
+    border: 1px solid #d8e0e8;
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-top: 8px;
+    font-size: 13px;
+    color: #333;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  }
+  .attach-chip .ico {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, #5b8cff, #2563eb);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 16px;
+  }
+  .attach-chip .meta {
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .attach-chip .meta .name { font-weight: 500; color: #1b1b1f; }
+  .attach-chip .meta .sub { font-size: 11px; color: #888; font-family: ui-monospace, monospace; }
+  .attach-chip .x {
+    color: #aaa; cursor: pointer; font-size: 18px; line-height: 1;
+    margin-left: 4px; padding: 2px 6px; border-radius: 4px;
+  }
+  .attach-chip .x:hover { background: #f0f0f0; color: #555; }
+
+  /* ===== Tool block (ASR transcribe) ===== */
+  .tool-block {
+    margin: 12px 0;
+    border: 1px solid #e3e8ee;
+    border-radius: 10px;
+    background: #fafbfc;
+    overflow: hidden;
+    font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace;
+    font-size: 12.5px;
+  }
+  .tool-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: #f1f4f8;
+    border-bottom: 1px solid #e3e8ee;
+  }
+  .tool-head .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .tool-head.running .dot { background: #2563eb; animation: pulse 1.2s infinite; }
+  .tool-head.ok .dot { background: #16a34a; }
+  .tool-head.err .dot { background: #dc2626; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.85); }
+  }
+  .tool-head .name { font-weight: 600; color: #1b1b1f; }
+  .tool-head .lat { margin-left: auto; color: #888; font-size: 11px; }
+  .tool-body { padding: 10px 12px; color: #444; line-height: 1.6; }
+  .tool-body code {
+    background: #fff;
+    border: 1px solid #e8ecf1;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 11.5px;
+    color: #2563eb;
+  }
+  .tool-body .meta-line { color: #888; font-size: 11.5px; margin-top: 4px; }
+  .tool-foot {
+    padding: 6px 12px;
+    border-top: 1px solid #e8ecf1;
+    font-size: 11px;
+    color: #888;
+    background: #fff;
+    display: flex; gap: 14px; align-items: center;
+  }
+  .tool-foot a { color: #2563eb; cursor: pointer; text-decoration: none; }
+  .tool-foot a:hover { text-decoration: underline; }
+
+  /* ===== Composer ===== */
+  #composer-wrap {
+    border-top: 1px solid #e8e8e8;
+    padding: 10px 16px 12px;
+  }
+  #composer {
+    border: 1px solid #d0d0d0;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .composer-main textarea {
+    width: 100%;
+    border: none;
+    outline: none;
+    resize: none;
+    padding: 10px 14px;
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: inherit;
+    min-height: 44px;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .composer-foot {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    gap: 8px;
+    background: #fafafa;
+    border-top: 1px solid #f0f0f0;
+  }
+  .attach-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    color: #888;
+    border-radius: 4px;
+    display: flex; align-items: center;
+  }
+  .attach-btn:hover { background: #f0f0f0; color: #555; }
+
+  /* Drop zone 高亮态（演示用） */
+  .composer.dragover {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    background: #f7faff;
+  }
+</style>
+</head>
+<body>
+
+<div class="preview-bar">
+  <strong>Demo：音频上传 + ASR 转写</strong> — 拖入音频文件 → 显示附件 chip → 发送 →
+  agent 调 <code>asr.py transcribe</code>（tool block 显示转写状态 + 结果）→ 看到 agent 回复。
+  对应 spec: <code>MonoDesk/spec/requirements/audio-asr.md</code>。
+</div>
+
+<div id="main-col">
+
+  <div id="conv">
+
+    <!-- 用户消息：拖入音频 + 提问 -->
+    <div class="msg">
+      <div class="msg-user">
+        帮我总结一下这段录音讲了什么
+        <div class="attach-chip">
+          <span class="ico">🎙</span>
+          <div class="meta">
+            <span class="name">meeting_recording.m4a</span>
+            <span class="sub">30:27 · 12.3 MB · audio/mp4</span>
+          </div>
+          <span class="x" title="移除">×</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Agent 处理过程：tool_start (running) → tool_end (ok) -->
+    <div class="msg">
+
+      <div class="tool-block" id="t1">
+        <div class="tool-head running">
+          <span class="dot"></span>
+          <span class="name">asr_transcribe</span>
+          <span class="lat">~12s</span>
+        </div>
+        <div class="tool-body">
+          <div>→ <code>python .monox/skills/asr/asr.py transcribe /Users/jialiang/.monox/attachments/default/20260901_223045_meeting_recording.m4a</code></div>
+          <div class="meta-line">ffmpeg → PCM 16kHz mono · WS 大模型 doubao-seed-asr-2.0</div>
+        </div>
+      </div>
+
+      <!-- tool_end 后变成 ok 状态 -->
+      <div class="tool-block">
+        <div class="tool-head ok">
+          <span class="dot"></span>
+          <span class="name">asr_transcribe</span>
+          <span class="lat">11.4s · 12,847 字</span>
+        </div>
+        <div class="tool-body">
+          <div>✓ <strong>已转写</strong>，约 30 分钟音频，估算 <strong>0.406 元</strong>（按 0.8 元/小时）。</div>
+          <div class="meta-line">转写已持久化，下次操作直接读本地文件，不重复调 API</div>
+        </div>
+        <div class="tool-foot">
+          <span>📄 ~/.monox/workspace/asr/20260901_223045_meeting_recording.asr.txt</span>
+          <a>复制路径</a>
+        </div>
+      </div>
+
+      <!-- Agent 最终回复 -->
+      <div class="msg-agent" style="margin-top:14px;">
+        这段 30 分钟的录音主要讨论了三个主题：
+        <br><br>
+        <strong>1. Q3 项目进度同步</strong>（00:00–08:30）
+        <br>团队回顾了 6 个子项目的状态。其中「语音转写 skill」」进入 QA 阶段，预计下周三发版；「多 LLM 并排」仍卡在 token 统计口径上。
+        <br><br>
+        <strong>2. 预算调整</strong>（08:30–15:10）
+        <br>因 Agent Plan 实际使用量低于预期，把云端 LLM 月预算下调 20%，挪给本地代码高亮专项。
+        <br><br>
+        <strong>3. MonoDesk v4 需求</em>（15:10–30:27）
+        <br>... <em>[详细要点]</em>
+      </div>
+    </div>
+
+    <!-- 用户后续提问，验证「不再重复调 ASR」 -->
+    <div class="msg" style="margin-top:24px;">
+      <div class="msg-user">
+        Q3 那部分提到 QA 卡在哪了？
+      </div>
+    </div>
+
+    <div class="msg">
+      <div class="msg-agent">
+        录音 12:30 那里李雷提到，QA 卡在两个 flaky 测试（test_session_restore 和
+        test_async_task_timeout），周末跑 10 次有 3 次失败，王芳说下周让她看下。
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Composer -->
+  <div id="composer-wrap">
+    <div id="composer" class="composer">
+      <div class="composer-main">
+        <textarea id="ta" rows="2" placeholder="Message MonoX… (paste or drop audio)">哪里提到张三？</textarea>
+      </div>
+      <div class="composer-foot">
+        <button class="attach-btn" title="Attach audio">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+          </svg>
+        </button>
+
+        <div style="font-size:11px;color:#aaa;">ready</div>
+
+        <div style="flex:1"></div>
+
+        <button id="send" style="background:#1a73e8;border:none;border-radius:6px;padding:5px 12px;cursor:pointer;color:#fff;font-size:13px;">
+          Send
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // 演示交互：拖入文本框高亮 + × 删除附件
+  const composer = document.getElementById('composer');
+  const ta = document.getElementById('ta');
+
+  ['dragenter', 'dragover'].forEach(ev =>
+    composer.addEventListener(ev, e => { e.preventDefault(); composer.classList.add('dragover'); })
+  );
+  ['dragleave', 'drop'].forEach(ev =>
+    composer.addEventListener(ev, e => { e.preventDefault(); composer.classList.remove('dragover'); })
+  );
+
+  // × 删除
+  document.querySelectorAll('.attach-chip .x').forEach(x => {
+    x.addEventListener('click', e => {
+      e.target.closest('.attach-chip').remove();
+    });
+  });
+</script>
+
+</body>
+</html>

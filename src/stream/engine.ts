@@ -38,6 +38,7 @@ export type Child =
       id: string;
       kind: "tool";
       name: string;
+      // 完整参数字符串（不再 truncation）；UI 自行决定如何压缩展示。
       args: string;
       state: "running" | "done";
       result?: ToolResultData;
@@ -55,6 +56,9 @@ export type Msg =
       id: string;
       role: "assistant";
       children: Child[];
+      // pending: 等待首帧内容（token/reasoning/tool）到达时为 true，
+      // 期间 UI 显示 loading 指示器；首帧到达后（或 error/final），清除此标记。
+      pending?: boolean;
       runId?: string | null;
       // 行内指标（final 时从最新 metric 写回，用于 agent label 下方一行：
       // "X tok · Yms · ⚡ Z% · [trace]"）。
@@ -124,6 +128,7 @@ const TARGET_BUFFER_MS = 120;    // 希望维持的 buffer 积压
 const MAX_BUFFER_MS = 1500;      // 积压过大则跳过（模型太快）
 const TICK_MS = 33;              // 30fps tick
 const CHARS_PER_TICK = 3;        // 每 tick 解锁 3 个字符（≈ 90 cps @ 30fps）
+const REASONING_CPS = 90;        // reasoning 同速率解锁，保持视觉一致
 
 // ---- Per-session stream state (#74 + #78) ----
 //
@@ -156,8 +161,11 @@ interface PerSessionStream {
 
   // 文本 / 推理缓冲
   tokenBuf: string;
-  reasoningBuf: string;
+  reasoningBuf: string;         // 完整 reasoning 文本（freeze 时写 msg 用）
   reasoningStart: number;
+  reasoningQueue: Array<{ ch: string; arriveAt: number }>;  // reasoning jitter buffer
+  reasoningPainted: number;    // 已渲染到 DOM 的字符数（增量写入用）
+  reasoningLastFlushAt: number;
   curTextId: string | null;
   curReasoningId: string | null;
 
@@ -197,6 +205,9 @@ function emptyStream(): PerSessionStream {
     tokenBuf: "",
     reasoningBuf: "",
     reasoningStart: 0,
+    reasoningQueue: [],
+    reasoningPainted: 0,
+    reasoningLastFlushAt: 0,
     curTextId: null,
     curReasoningId: null,
     jbQueue: [],
@@ -259,9 +270,13 @@ export class StreamEngine {
       // 别的 block（children 列表变化）——忽略那些，避免 reasoningEls 错位。
       if (els.id === s.curReasoningId) {
         s.reasoningEls = els;
+        // rebind 时若有积压，立刻 drain（queue 保留着，flush 会追上）
         this.scheduleFlush(s);
       }
     } else {
+      // reasoning 组件 unmount：立刻合并所有未完成的 fresh span
+      //（DOM 还在，mergeTimer 会在下一个 flush 前或独立触发）
+      this.consolidateFreshSpans(s);
       s.reasoningEls = null;
     }
   }
@@ -285,7 +300,7 @@ export class StreamEngine {
     cb.setMsgs((prev) => [
       ...prev,
       { id: nextId(), role: "user", text, attachments },
-      { id: nextId(), role: "assistant", children: [] },
+      { id: nextId(), role: "assistant", children: [], pending: true },
     ]);
     this.resetTurn(cb, sessionKey);
     const s = this.streamFor(sessionKey);
@@ -309,6 +324,9 @@ export class StreamEngine {
     s.tokenBuf = "";
     s.reasoningBuf = "";
     s.reasoningStart = 0;
+    s.reasoningQueue = [];
+    s.reasoningPainted = 0;
+    s.reasoningLastFlushAt = 0;
     s.firstTokenAt = 0;
     s.tokenCount = 0;
     s.streaming = false;
@@ -400,7 +418,7 @@ export class StreamEngine {
     cb.setMsgs((prev) => {
       const last = prev[prev.length - 1];
       if (last && last.role === "assistant") return prev;
-      return [...prev, { id: nextId(), role: "assistant", children: [] }];
+      return [...prev, { id: nextId(), role: "assistant", children: [], pending: true }];
     });
     const s = this.streamFor(sk);
     s.turnOpen = true;
@@ -416,6 +434,14 @@ export class StreamEngine {
       s.curReasoningId = id;
       this.appendChild(cb, sk, { id, kind: "reasoning" });
       s.reasoningStart = now();
+      s.reasoningQueue = [];
+      s.reasoningPainted = 0;
+      s.reasoningLastFlushAt = 0;
+    }
+    // 记录每个字符的到达时间（jitter buffer 用）
+    const t = now();
+    for (const ch of text) {
+      s.reasoningQueue.push({ ch, arriveAt: t });
     }
     s.reasoningBuf += text;
     this.scheduleFlush(s);
@@ -443,6 +469,22 @@ export class StreamEngine {
       // 第一个 token 到达：初始化虚拟播放头 = 当前时间 + TARGET_BUFFER_MS 积压
       s.jbPlayhead = s.firstTokenAt + TARGET_BUFFER_MS;
       s.jbLastFlushAt = s.firstTokenAt;
+      // 流式路径（assistantEl 已绑定）时 appendChild 不被调用，需在此清除 pending
+      if (s.assistantEl) {
+        cb.setMsgs((prev) => {
+          for (let i = prev.length - 1; i >= 0; i--) {
+            const m = prev[i];
+            if (m.role !== "assistant") continue;
+            if (m.pending) {
+              const next = [...prev];
+              next[i] = { ...m, pending: false };
+              return next;
+            }
+            break;
+          }
+          return prev;
+        });
+      }
     }
     // 每个字符打上"到达时间戳"，进入 jitter queue。
     // tokenBuf 始终是「已上屏 + 队列里全部」的总拼接，方便 freeze 时拿到完整文本。
@@ -465,7 +507,6 @@ export class StreamEngine {
     const argsStr = Object.entries(args || {})
       .map(([k, v]) => k + "=" + JSON.stringify(v))
       .join(" ");
-    const argsDisplay = truncate(argsStr, 40);
     const s = this.streamFor(sk);
 
     // 有 call_id + 之前有 ToolPending 创过块 → 找到它，只更新 args/name。
@@ -482,7 +523,7 @@ export class StreamEngine {
                 ...m,
                 children: m.children.map((c) =>
                   c.id === targetId
-                    ? ({ ...c, name, args: argsDisplay, state: "running" } as Child)
+                    ? ({ ...c, name, args: argsStr, state: "running" } as Child)
                     : c
                 ),
               }
@@ -497,7 +538,7 @@ export class StreamEngine {
       id,
       kind: "tool",
       name,
-      args: argsDisplay,
+      args: argsStr,
       state: "running",
       callId,
     });
@@ -525,7 +566,7 @@ export class StreamEngine {
       id,
       kind: "tool",
       name,
-      args: argsSoFar ? truncate(argsSoFar, 40) : "",
+      args: argsSoFar || "",
       state: "running",
       callId,
     });
@@ -614,18 +655,17 @@ export class StreamEngine {
     // 因为 final 是 run 终结的权威信号，server 通常会用跟 metric 一致的值，
     // 但若 server 重新生成（比如同一 turn 多个 metric 中间换 trace），final 的
     // 才是 run 真正的 ID。
-    if (traceId) {
-      cb.setMsgs((prev) => {
-        for (let i = prev.length - 1; i >= 0; i--) {
-          const m = prev[i];
-          if (m.role !== "assistant") continue;
-          const next = [...prev];
-          next[i] = { ...m, runId: traceId };
-          return next;
-        }
-        return prev;
-      });
-    }
+    // 同时，无论是否有 traceId，都清除 pending（turn 结束，loading 必须消失）。
+    cb.setMsgs((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.role !== "assistant") continue;
+        const next = [...prev];
+        next[i] = { ...m, pending: false, ...(traceId ? { runId: traceId } : {}) };
+        return next;
+      }
+      return prev;
+    });
     // 不再有 s.currentMetric = null —— 那个字段已删。
   }
 
@@ -643,6 +683,20 @@ export class StreamEngine {
     this.freezeReasoning(cb, sk);
     this.appendChild(cb, sk, { id: nextId(), kind: "error", text: code + " — " + msg });
     cb.setStatus("error");
+    // error 也是"终态"，loading 必须消失
+    cb.setMsgs((prev) => {
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.role !== "assistant") continue;
+        if (m.pending) {
+          const next = [...prev];
+          next[i] = { ...m, pending: false };
+          return next;
+        }
+        break;
+      }
+      return prev;
+    });
   }
 
   // ---- 结构性块列表变更 ----
@@ -655,7 +709,8 @@ export class StreamEngine {
       const next = [...prev];
       const last = next[next.length - 1];
       if (last && last.role === "assistant") {
-        next[next.length - 1] = { ...last, children: [...last.children, child] };
+        // 首帧内容到达时清除 pending（loading 指示器）
+        next[next.length - 1] = { ...last, pending: false, children: [...last.children, child] };
       }
       return next;
     });
@@ -689,14 +744,69 @@ export class StreamEngine {
   }
 
   private flush(stream: PerSessionStream) {
-    if (stream.reasoningEls) {
-      stream.reasoningEls.body.innerHTML = esc(stream.reasoningBuf) + CARET;
-      const dur = now() - stream.reasoningStart;
-      const meta = stream.reasoningEls.head.querySelector(".meta");
-      if (meta) meta.textContent = stream.reasoningBuf.length + " chars · " + fmtMs(dur);
-    }
+    if (stream.reasoningEls) this.paintReasoning(stream);
     if (stream.assistantEl) this.paintText(stream);
     if (stream.scrollEl) stream.scrollRequest = true;
+  }
+
+  // reasoning 的 jitter buffer 渲染：按 90cps 固定速率从 queue 解锁字符，
+  // 增量追加到 DOM（不再每次 innerHTML 全量重写），避免 burst 时一卡一卡。
+  private paintReasoning(stream: PerSessionStream) {
+    const body = stream.reasoningEls!.body;
+    const t = now();
+
+    // 初始化播放头
+    if (stream.reasoningLastFlushAt === 0) stream.reasoningLastFlushAt = t;
+
+    // 推进虚拟播放头（每 ms 推进 REASONING_CPS / 1000 chars）
+    const dtMs = Math.max(0, t - stream.reasoningLastFlushAt);
+    stream.reasoningLastFlushAt = t;
+
+    // drain 过大的积压（模型太快时跳过等待）
+    if (stream.reasoningQueue.length > 0) {
+      const headLag = t - stream.reasoningQueue[0].arriveAt;
+      if (headLag > MAX_BUFFER_MS) {
+        // 把播放头追上最新到达的字符 + TARGET_BUFFER_MS 积压
+        const latestArrive = stream.reasoningQueue[stream.reasoningQueue.length - 1].arriveAt;
+        stream.reasoningLastFlushAt = latestArrive + TARGET_BUFFER_MS;
+      }
+    }
+
+    // 每 tick 解锁 chars = dtMs * REASONING_CPS / 1000
+    const charsToRelease = Math.floor((dtMs * REASONING_CPS) / 1000);
+    let released = "";
+    for (let i = 0; i < charsToRelease && stream.reasoningQueue.length > 0; i++) {
+      released += stream.reasoningQueue.shift()!.ch;
+    }
+
+    if (released.length > 0) {
+      // 增量写入：把新解锁的字符追加到 DOM
+      const frag = document.createDocumentFragment();
+      for (const ch of released) {
+        const span = document.createElement("span");
+        span.className = "ch fresh";
+        span.textContent = ch;
+        frag.appendChild(span);
+        stream.freshSpans.push(span);
+      }
+      // 移除旧 caret，追加新内容
+      const oldCaret = body.querySelector(".caret");
+      if (oldCaret) oldCaret.remove();
+      body.appendChild(frag);
+      // 追加新 caret
+      const c = document.createElement("span");
+      c.className = "caret";
+      body.appendChild(c);
+      stream.reasoningPainted += released.length;
+    }
+
+    // 更新 meta
+    const dur = now() - stream.reasoningStart;
+    const meta = stream.reasoningEls!.head.querySelector(".meta");
+    if (meta) meta.textContent = stream.reasoningBuf.length + " chars · " + fmtMs(dur);
+
+    // 还有积压则继续 schedule
+    if (stream.reasoningQueue.length > 0) this.scheduleFlush(stream);
   }
 
   private paintText(stream: PerSessionStream) {
@@ -842,6 +952,9 @@ export class StreamEngine {
     s.reasoningEls = null;
     s.reasoningBuf = "";
     s.reasoningStart = 0;
+    s.reasoningQueue = [];
+    s.reasoningPainted = 0;
+    s.reasoningLastFlushAt = 0;
   }
 
   /** 外部触发一次「请滚到底」请求。

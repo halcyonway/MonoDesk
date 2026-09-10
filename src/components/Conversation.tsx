@@ -262,15 +262,23 @@ function MsgView({
         )}
       </div>
       <div className="stream">
-        {msg.children.map((c) => (
-          <ChildView
-            key={c.id}
-            child={c}
-            engine={engine}
-            sessionKey={sessionKey}
-            onOpenTask={onOpenTask}
-          />
-        ))}
+        {msg.pending && msg.children.length === 0 ? (
+          <div className="msg-pending">
+            <span className="pending-dot" />
+            <span className="pending-dot" />
+            <span className="pending-dot" />
+          </div>
+        ) : (
+          msg.children.map((c) => (
+            <ChildView
+              key={c.id}
+              child={c}
+              engine={engine}
+              sessionKey={sessionKey}
+              onOpenTask={onOpenTask}
+            />
+          ))
+        )}
       </div>
     </div>
   );

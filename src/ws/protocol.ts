@@ -96,7 +96,7 @@ export type MonoDeskEvent =
 // 入站事件（MonoDesk → MonoX）
 export type InboundMessage =
   | { type: "user_input"; data: { text: string; session_key?: string; attachments?: Attachment[]; meta?: Record<string, unknown> } }
-  | { type: "interrupt"; data: Record<string, never> }
+  | { type: "interrupt"; data: { session_key: string } }
   | { type: "command"; data: { text: string } }
   | { type: "async_task_cancel"; data: { task_id: string; reason: "user" } }
   | { type: "async_task_list_query"; data: { session_key: string; filter: { status?: string[] } | null } };

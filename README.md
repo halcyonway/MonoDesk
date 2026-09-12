@@ -2,6 +2,10 @@
   <img src="logo.svg" alt="MonoDesk" width="128"/>
 </p>
 
+<p align="center">
+  <img src="screenshot.png" alt="MonoDesk UI" width="720"/>
+</p>
+
 # MonoDesk
 
 **The desktop channel for [MonoX](https://github.com/halcyonway/MonoX).**

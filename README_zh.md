@@ -19,6 +19,7 @@ MonoDesk 将 MonoX Runtime 的 token 流实时渲染到屏幕上，配合 jitter
 **技术栈：** Tauri v2（Rust 窗口壳）+ TypeScript + React 18。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-2.0-8b5cf6?logo=tauri)](https://tauri.app/)
 
 ## 特性
 

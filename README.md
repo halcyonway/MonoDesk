@@ -18,10 +18,7 @@ MonoDesk streams token output from MonoX Runtime to your screen with a jitter-bu
 
 **Stack:** Tauri v2 (Rust window shell) + TypeScript + React 18.
 
-<p align="center">
-  [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-  [![Tauri](https://img.shields.io/badge/Tauri-2.0-8b5cf6?logo=tauri)](https://tauri.app/)
-</p>
+![License](https://img.shields.io/github/license/halcyonway/MonoDesk?color=a855f7) ![Tauri](https://img.shields.io/badge/Tauri-2.0-a855f7?logo=tauri) ![React](https://img.shields.io/badge/React-18-ec4899?logo=react)
 
 ## Features
 

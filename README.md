@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="logo.svg" alt="MonoDesk" width="128"/>
+  <img src="logo.svg" alt="MonoDesk" width="200"/>
+</p>
+
+<p align="center">
+  <strong>English</strong> · <a href="README_zh.md">中文</a>
 </p>
 
 <p align="center">

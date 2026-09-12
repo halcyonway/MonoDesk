@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo_zh.svg" alt="MonoDesk" width="128"/>
+</p>
+
 # MonoDesk
 
 **[MonoX](https://github.com/halcyonway/MonoX) 的桌面 Channel 实现。**
@@ -31,11 +35,11 @@ flowchart LR
     Engine -->|"direct DOM"| DOM["DOM Writer<br/>逐字符淡入"]
     Engine -->|"shallow props"| React["React 组件<br/>结构块"]
 
-    style MonoX fill:#0c1f2e,stroke:#1d4ed8,color:#93c5fd
-    style WS fill:#1f1f35,stroke:#8b5cf6,color:#c4b5fd
-    style Engine fill:#1f1f35,stroke:#8b5cf6,color:#c4b5fd
-    style DOM fill:#2d1f3d,stroke:#a855f7,color:#e9d5ff
-    style React fill:#2d1f3d,stroke:#a855f7,color:#e9d5ff
+    style MonoX fill:#e8f2fc,stroke:#1d4ed8,color:#1e3a5f
+    style WS fill:#f5f0ff,stroke:#8b5cf6,color:#4c1d95
+    style Engine fill:#f5f0ff,stroke:#8b5cf6,color:#4c1d95
+    style DOM fill:#fdf4ff,stroke:#a855f7,color:#6b21a8
+    style React fill:#fdf4ff,stroke:#a855f7,color:#6b21a8
 ```
 
 ## 前置条件

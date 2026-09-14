@@ -10,10 +10,6 @@
 
 </div>
 
-<div align="center">
-  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
-</div>
-
 # MonoDesk
 
 **The desktop channel for [MonoX](https://github.com/halcyonway/MonoX).**
@@ -23,6 +19,18 @@ MonoDesk streams token output from MonoX Runtime to your screen with a jitter-bu
 **Stack:** Tauri v2 (Rust window shell) + TypeScript + React 18.
 
 ## Features
+
+- **Jitter buffer typewriter** — Token buffer + 30fps tick at ~90 chars/sec. Each character fades in individually, eliminating jitter.
+- **Markdown rendering** — Tables, code blocks, inline code — streamed in real time.
+- **Multi-session** — Sidebar session list with independent histories. Switch instantly.
+- **Async task tracking** — Built-in Tasks page for long-running async operations.
+- **Lightweight Tauri shell** — Rust does only window management; all logic lives in TypeScript.
+
+## Preview
+
+<div align="center">
+  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
+</div>
 
 - **Jitter buffer typewriter** — Token buffer + 30fps tick at ~90 chars/sec. Each character fades in individually, eliminating jitter.
 - **Markdown rendering** — Tables, code blocks, inline code — streamed in real time.

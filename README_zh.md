@@ -10,10 +10,6 @@
 
 </div>
 
-<div align="center">
-  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
-</div>
-
 # MonoDesk
 
 **[MonoX](https://github.com/halcyonway/MonoX) 的桌面 Channel 实现。**
@@ -23,6 +19,18 @@ MonoDesk 将 MonoX Runtime 的 token 流实时渲染到屏幕上，配合 jitter
 **技术栈：** Tauri v2（Rust 窗口壳）+ TypeScript + React 18。
 
 ## 特性
+
+- **Jitter Buffer 打字机** — Token 缓冲 + 30fps 刷新，约 90 字符/秒。每字符独立淡入，消除抖动。
+- **Markdown 渲染** — 表格、代码块、行内代码，实时流式渲染。
+- **多 Session** — 侧边栏会话列表，独立历史记录，秒级切换。
+- **异步任务追踪** — 内置 Tasks 页面，追踪长时间运行的异步操作。
+- **轻量 Tauri 壳** — Rust 只做窗口管理，所有逻辑在 TypeScript。
+
+## 预览
+
+<div align="center">
+  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
+</div>
 
 - **Jitter Buffer 打字机** — Token 缓冲 + 30fps 刷新，约 90 字符/秒。每字符独立淡入，消除抖动。
 - **Markdown 渲染** — 表格、代码块、行内代码，实时流式渲染。

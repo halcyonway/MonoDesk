@@ -1,14 +1,18 @@
-<p align="center">
-  <img src="logo.svg" alt="MonoDesk" width="200"/>
-</p>
+<div align="center">
 
-<p align="center">
-  <strong>English</strong> · <a href="README_zh.md">中文</a>
-</p>
+<img src="logo.svg" alt="MonoDesk" width="280"/>
 
-<p align="center">
-  <img src="screenshot.png" alt="MonoDesk UI" width="720"/>
-</p>
+**English** · [中文](README_zh.md)
+
+[![License](https://img.shields.io/github/license/halcyonway/MonoDesk?style=for-the-badge&color=a855f7)](LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-2.0-a855f7?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app)
+[![React](https://img.shields.io/badge/React-18-ec4899?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
+
+</div>
+
+<div align="center">
+  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
+</div>
 
 # MonoDesk
 
@@ -17,8 +21,6 @@
 MonoDesk streams token output from MonoX Runtime to your screen with a jitter-buffered typewriter effect, and sends your input back. It implements only "view" and "speak" — all agent logic (ReAct loop, tools, memory) lives in MonoX core.
 
 **Stack:** Tauri v2 (Rust window shell) + TypeScript + React 18.
-
-![License](https://img.shields.io/github/license/halcyonway/MonoDesk?color=a855f7) ![Tauri](https://img.shields.io/badge/Tauri-2.0-a855f7?logo=tauri) ![React](https://img.shields.io/badge/React-18-ec4899?logo=react)
 
 ## Features
 

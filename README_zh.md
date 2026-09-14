@@ -1,14 +1,18 @@
-<p align="center">
-  <img src="logo.svg" alt="MonoDesk" width="200"/>
-</p>
+<div align="center">
 
-<p align="center">
-  <a href="README.md">English</a> · <strong>中文</strong>
-</p>
+<img src="logo.svg" alt="MonoDesk" width="280"/>
 
-<p align="center">
-  <img src="screenshot.png" alt="MonoDesk UI" width="720"/>
-</p>
+[English](README.md) · **中文**
+
+[![License](https://img.shields.io/github/license/halcyonway/MonoDesk?style=for-the-badge&color=a855f7)](LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-2.0-a855f7?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app)
+[![React](https://img.shields.io/badge/React-18-ec4899?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
+
+</div>
+
+<div align="center">
+  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
+</div>
 
 # MonoDesk
 
@@ -17,8 +21,6 @@
 MonoDesk 将 MonoX Runtime 的 token 流实时渲染到屏幕上，配合 jitter-buffered 打字机效果，并将用户输入回传给 Runtime。它只实现"看"和"说"——所有 agent 逻辑（ReAct 循环、工具、记忆）都在 MonoX core 中。
 
 **技术栈：** Tauri v2（Rust 窗口壳）+ TypeScript + React 18。
-
-![License](https://img.shields.io/github/license/halcyonway/MonoDesk?color=a855f7) ![Tauri](https://img.shields.io/badge/Tauri-2.0-a855f7?logo=tauri) ![React](https://img.shields.io/badge/React-18-ec4899?logo=react)
 
 ## 特性
 

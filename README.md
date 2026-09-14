@@ -1,95 +1,123 @@
+<div align="center">
+
+<img src="logo.svg" alt="MonoDesk" width="280"/>
+
+**English** · [中文](README_zh.md)
+
+[![License](https://img.shields.io/github/license/halcyonway/MonoDesk?style=for-the-badge&color=a855f7)](LICENSE)
+[![Tauri](https://img.shields.io/badge/Tauri-2.0-a855f7?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app)
+[![React](https://img.shields.io/badge/React-18-ec4899?style=for-the-badge&logo=react&logoColor=white)](https://react.dev)
+
+</div>
+
 # MonoDesk
 
-[MonoX](https://github.com/halcyonway/MonoX) 的桌面 channel 实现。MonoX Runtime 通过 ws 协议把 `StreamEvent` 流式推给桌面，桌面把用户输入反哺回 Runtime loop。
+**The desktop channel for [MonoX](https://github.com/halcyonway/MonoX).**
 
-**MonoDesk 只做「看」和「说」——不实现任何 agent 逻辑。** ReAct 循环、工具执行、checkpoint、memory 全部在 MonoX `core/`。
+MonoDesk streams token output from MonoX Runtime to your screen with a jitter-buffered typewriter effect, and sends your input back. It implements only "view" and "speak" — all agent logic (ReAct loop, tools, memory) lives in MonoX core.
 
-## 设计哲学
+**Stack:** Tauri v2 (Rust window shell) + TypeScript + React 18.
 
-- **MonoDesk 是协议实现，不是产品** —— MonoX 定义 `Channel` Protocol（`start/stop/listen/send`），MonoDesk 实现它 + 加 ws 传输层
-- **流式优先** —— token 缓冲 + 30fps tick 合并写 DOM，每帧最多一次重绘；React 只管结构块（turn / reasoning 开关 / tool 起止）
-- **Tauri 壳轻量** —— Rust 只做窗口，逻辑全在 TypeScript
-- **与 MonoX 解耦** —— MonoDesk 只依赖 MonoX 协议字段（`events.py` 的 dataclass），不依赖具体实现
-- **Jitter Buffer 平稳打字机** —— 单字 90cps + 120ms 缓冲，单字从左到右半透明淡入，避免抖动/卡顿
+## Features
 
-完整设计：`spec/OVERVIEW.md`。
+- **Jitter buffer typewriter** — Token buffer + 30fps tick at ~90 chars/sec. Each character fades in individually, eliminating jitter.
+- **Markdown rendering** — Tables, code blocks, inline code — streamed in real time.
+- **Multi-session** — Sidebar session list with independent histories. Switch instantly.
+- **Async task tracking** — Built-in Tasks page for long-running async operations.
+- **Lightweight Tauri shell** — Rust does only window management; all logic lives in TypeScript.
 
-## 架构
+## Preview
+
+<div align="center">
+  <img src="screenshot.png" alt="MonoDesk UI" width="800"/>
+</div>
+
+- **Jitter buffer typewriter** — Token buffer + 30fps tick at ~90 chars/sec. Each character fades in individually, eliminating jitter.
+- **Markdown rendering** — Tables, code blocks, inline code — streamed in real time.
+- **Multi-session** — Sidebar session list with independent histories. Switch instantly.
+- **Async task tracking** — Built-in Tasks page for long-running async operations.
+- **Lightweight Tauri shell** — Rust does only window management; all logic lives in TypeScript.
+
+## Architecture
 
 ```mermaid
-graph LR
-    Loop["MonoX LoopEngine"] -->|StreamEvent| GW["MultiChannelGateway"]
-    GW -->|in-process| RuntimeWSClient["RuntimeWSClient<br/>(extensions/channels/*)"]
-    RuntimeWSClient -->|ws :8765| Desk
-    Desk -->|ws :8765| RuntimeWSClient
-    Desk --> WS["ws/<br/>protocol + client<br/>(NDJSON + 退避重连)"]
-    WS --> Engine["stream/<br/>jitter buffer + 单字淡入"]
-    Engine --> DOM["DOM 直写<br/>(文本节点 + span)"]
-    Engine --> React["React 组件<br/>(结构块, 浅 props)"]
+flowchart LR
+    subgraph MonoX["MonoX Runtime (Python)"]
+        Loop["LoopEngine"]
+        Loop -->|"StreamEvent<br/>NDJSON"| Out["outbound"]
+        In["inbound"] -->|"UserInput"| Loop
+    end
 
-    classDef mono fill:#e8f4f8,stroke:#333,stroke-width:2px
-    classDef desk fill:#fdf3e7,stroke:#333,stroke-width:1px
-    class Loop,GW,RuntimeWSClient mono
-    class Desk,WS,Engine,DOM,React desk
+    Out -->|"ws :8765"| WS["WS Client<br/>reconnect + NDJSON"]
+    WS -->|"events"| Engine["StreamEngine<br/>jitter buffer<br/>30fps tick"]
+    Engine -->|"direct DOM"| DOM["DOM Writer<br/>char-by-char<br/>fade-in"]
+    Engine -->|"shallow props"| React["React Components<br/>structural blocks"]
+
+    style MonoX fill:#e8f2fc,stroke:#1d4ed8,color:#1e3a5f
+    style WS fill:#f5f0ff,stroke:#8b5cf6,color:#4c1d95
+    style Engine fill:#f5f0ff,stroke:#8b5cf6,color:#4c1d95
+    style DOM fill:#fdf4ff,stroke:#a855f7,color:#6b21a8
+    style React fill:#fdf4ff,stroke:#a855f7,color:#6b21a8
 ```
 
-> 注：v0.1+ 起 MonoDesk 与 MonoX 之间**统一走 ws :8765**（RuntimeServer 端口）。
-> 早期文档里的 `:8766` 是 monodesk channel 独立进程的端口，已废弃。
+## Prerequisites
 
-## 快速启动
+[MonoX Runtime](https://github.com/halcyonway/MonoX) must be running first:
 
-**先起 MonoX Runtime**（[github.com/halcyonway/MonoX](https://github.com/halcyonway/MonoX)）：
 ```bash
 cd ../MonoX
-uv run python run.py        # 启 ws server :8765
+uv run python run.py        # starts ws server on :8765
 ```
 
-**再起 MonoDesk**（Vite 开发模式，纯前端）：
+## Getting Started
+
+**Browser (development):**
 ```bash
 npm install
-npm run dev                  # 浏览器跑 http://localhost:5173，连 ws://127.0.0.1:8765
+npm run dev                 # http://localhost:5173
 ```
 
-**Tauri 桌面壳**（生产形态）：
+**Desktop app:**
 ```bash
-npm run tauri dev            # 同上 + 窗口
-npm run tauri build          # 出 .app / .msi
+npm run tauri dev           # dev + window
+npm run tauri build         # production .app/.msi
 ```
 
-覆盖连接地址：
+**Override WS URL (connect to a remote runtime):**
 ```bash
 VITE_WS_URL=ws://192.168.1.5:8765 npm run dev
 ```
 
-## 目录
+## Project Layout
 
 ```
 src/
-├── ws/                  # ws 协议 + 客户端（重连 + 帧解析）
-├── stream/              # 流式渲染引擎：jitter buffer + 单字淡入（核心资产）
-│   ├── engine.ts          #   StreamEngine：token / reasoning / tool 状态机
-│   └── markdown.ts        #   markdown + table + codeblock 渲染
-├── components/          # React 组件（结构块，不参与 token 路径）
-│   ├── Chrome.tsx         #   TopBar + SessionList
-│   ├── Conversation.tsx   #   TextStream / ReasonBlock / ToolBlock / MsgView
-│   └── Composer.tsx       #   输入框 + IME 处理 + status footer
-├── store/               # 本地持久化：会话列表 + 每会话历史
-│   └── sessions.ts        #   localStorage: monodesk:sessions + monodesk:histories
-├── App.tsx              # 装配 + WS 生命周期
-├── main.tsx
-└── styles.css           # 单文件 CSS（CSS variables + 主题）
-src-tauri/               # Tauri 桌面壳（窗口 + 原生能力）
-spec/                    # 设计文档
-preview/                 # v0 时期的纯 HTML mockup（保留参考，已不再是权威）
+├── ws/                     # WebSocket client + reconnect + NDJSON parsing
+├── stream/                 # StreamEngine: jitter buffer + typewriter DOM writer
+│   ├── engine.ts           #   Core: token/reasoning/tool state machine
+│   └── markdown.ts         #   Markdown + table + codeblock renderer
+├── components/             # React structural blocks (NOT on token path)
+│   ├── Chrome.tsx          #   TopBar + SessionList
+│   ├── Conversation.tsx    #   TextStream + ReasonBlock + ToolBlock
+│   └── Composer.tsx        #   Input box + IME + status footer
+├── store/                  # Local persistence (session list + histories)
+│   └── sessions.ts         #   localStorage: monodesk:sessions + histories
+├── App.tsx                 # Root: WS lifecycle, session routing, pages
+└── styles.css              # Single CSS file with variables + themes
+src-tauri/                  # Tauri desktop shell (window + native)
+spec/                       # Design documents
 ```
 
-## 测试
+## Pages
 
-```bash
-npm run build            # tsc --noEmit + vite build（无独立测试套件，渲染层靠 spec snapshot）
-```
+- **Chat** — Conversational interface with token streaming
+- **Skills** — Browse available skills from the runtime
+- **Tasks** — Async task list and detail views
 
-## 与 MonoX 的版本对齐
+## Protocol Compatibility
 
-MonoDesk 不锁 MonoX 版本号：协议（envelope + event fields）是稳定契约，event 字段加新字段向后兼容，
-MonoDesk 未识别的 `type` 直接忽略（`ws/client.ts` 的 try/catch）。
+MonoDesk does **not** pin MonoX version. The protocol (envelope + event fields) is the stable contract. Unknown `type` values are silently ignored.
+
+## License
+
+MIT

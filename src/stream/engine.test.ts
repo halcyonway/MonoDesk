@@ -605,3 +605,74 @@ describe("StreamEngine per-session isolation (#73 + #74)", () => {
     expect(aBeforeSwitch[1].id).toBe(aMsgs[1].id);
   });
 });
+
+describe("paintReasoning release rate (#polish)", () => {
+  // #polish: REASONING_CPS 从 90 → 30，让 reasoning 走「字符打字机」节奏（~1 字/tick @ 33ms）。
+  // 之前的 90 cps ≈ 2 字/tick 视觉上 burst，用户反馈「不是一字一字出来」。
+  //
+  // 测试策略：用 fake timer 跑 60 个 33ms tick，量 reasoningPainted 增量。
+  // 60 ticks @ 33ms = 1980ms wall-clock；REASONING_CPS=30 → ~60 chars 释放。
+  it("releases ~1 char per 33ms tick (REASONING_CPS=30)", () => {
+    const { router } = makeCallbacks();
+    const engine = new StreamEngine(router);
+
+    // 先开 turn 并切到 thinking 状态
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+
+    // 切到 fake timers —— 必须在 dispatch 之前，否则 scheduleFlush 的 setTimeout
+    // 已经用真实 timer 排队了，fake advance 抓不到。
+    vi.useFakeTimers();
+
+    // 注入 ~80 字 reasoning —— queue 里 80 个字符 + 触发 scheduleFlush
+    const text = "让我先看 core/channel/base.py 的协议，让我先看 core/channel/base.py 的协议，让";
+    engine.dispatch({ type: "reasoning", data: { session_key: "s1", text } });
+
+    // 取出 reasoning child id（curReasoningId）用于 bind —— bind 校验一致性
+    const internal = engine as unknown as {
+      streams: Map<string, {
+        reasoningPainted: number;
+        reasoningQueue: { ch: string }[];
+        curReasoningId: string | null;
+      }>;
+    };
+    const stream = internal.streams.get("s1")!;
+    expect(stream).toBeDefined();
+    const rid = stream.curReasoningId;
+    expect(rid).toBeTruthy();
+
+    // 用 jsdom 元素 bind reasoning DOM，让 paintReasoning 能跑
+    const container = document.createElement("div");
+    const head = document.createElement("div");
+    const body = document.createElement("div");
+    engine.bindReasoning("s1", { id: rid!, container, head, body });
+
+    const before = stream.reasoningPainted;
+    // 60 ticks @ 33ms ≈ 2s wall-clock；30 cps → ~60 chars
+    for (let i = 0; i < 60; i++) {
+      vi.advanceTimersByTime(33);
+    }
+    vi.useRealTimers();
+    const after = stream.reasoningPainted;
+
+    // 容忍 ±15 chars（首/尾 flush 边界、fake timer 跳变）。
+    expect(after - before).toBeGreaterThan(45);
+    expect(after - before).toBeLessThan(75);
+    // 关键否定：如果退回到 90 cps，应释放 ~180 chars
+    expect(after - before).toBeLessThan(120);
+  });
+
+  it("starts with empty queue and zero painted chars when no reasoning dispatched", () => {
+    const { router } = makeCallbacks();
+    const engine = new StreamEngine(router);
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+
+    const internal = engine as unknown as {
+      streams: Map<string, { reasoningPainted: number; reasoningQueue: unknown[] }>;
+    };
+    const stream = internal.streams.get("s1")!;
+    expect(stream.reasoningQueue.length).toBe(0);
+    expect(stream.reasoningPainted).toBe(0);
+  });
+});

@@ -342,19 +342,23 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
 }
 
 /* reasoning / tool blocks */
+/* #polish: 去掉 1px border 改 soft shadow；不动 left stripe（视觉锚点） */
 .block {
   margin: 0 0 12px; border-radius: 8px; overflow: hidden;
-  border: 1px solid var(--border); background: var(--bg-panel);
+  background: var(--bg-panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   font-size: 13px;
 }
 /* 整行垂直居中，所有 flex 兄弟元素都靠 align-items: center 对齐。
-   圆点放在 label 内部用 inline-flex，与 label 文字字形中心严格对齐。 */
+   圆点放在 label 内部用 inline-flex，与 label 文字字形中心严格对齐。
+   #polish: 字体改 sans（system-ui），不再 monospace；letter-spacing 提升大写感。 */
 .block-head {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 12px; cursor: pointer; user-select: none;
   color: var(--text-muted);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 12.5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.01em;
   line-height: 1.2;
 }
 .block-head:hover { background: var(--bg-hover); }
@@ -371,12 +375,13 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
 .block.open .block-head .chev { transform: rotate(90deg); }
 
 /* 圆点是几何图形，靠 label 的 inline-flex + align-items:center 自动和文字中线对齐 */
+/* #polish: 8x8 实心 → 6x6 + box-shadow 半透明晕（glowing dot 效果） */
 .r-dot, .t-dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 6px; height: 6px; border-radius: 50%;
   display: inline-block; flex: none;
 }
 .block.reasoning { border-left: 2px solid var(--thinking); }
-.block.reasoning .r-dot { background: var(--thinking); }
+.block.reasoning .r-dot { background: var(--thinking); box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.18); }
 .block.reasoning .block-body {
   padding: 2px 14px 12px; color: var(--text-muted); font-style: italic;
   border-top: 1px solid var(--border); white-space: pre-wrap; word-break: break-word;
@@ -384,28 +389,32 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
 }
 
 .block.tool { border-left: 2px solid var(--tool); }
-.block.tool .t-dot { background: var(--tool); }
-.block.tool .t-args { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.block.tool .t-dot { background: var(--tool); box-shadow: 0 0 0 3px rgba(3, 105, 161, 0.18); }
+/* #polish: 删除通用 ToolBlock 的 .t-args 截断显示（args 一截就无意义）。
+   task tool (fork/cancel/poll) 在 TaskBlock 里仍以 .t-args 显示 JSON args —— 短 JSON
+   截断无影响，保留样式。 */
+.block.tool .t-args {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 360px;
+}
 .block.tool .t-badge {
   display: inline-flex; align-items: center; gap: 4px; margin-left: auto;
   font-family: ui-monospace, monospace; font-size: 11px; font-weight: 600;
-  padding: 1px 7px; border-radius: 5px;
+  padding: 2px 8px; border-radius: 5px;        /* ↑ padding 1px 7px → 2px 8px */
 }
 .t-badge.ok { color: var(--ok); background: rgba(22, 163, 74, 0.08); }
-.t-badge.running { color: var(--tool); background: var(--tool-bg); animation: pulse 1.4s ease-in-out infinite; }
+.t-badge.running { color: var(--tool); background: transparent; border: 1px solid var(--tool); animation: pulse 1.4s ease-in-out infinite; }
 .t-badge.starting { color: var(--text-faint); background: rgba(0, 0, 0, 0.04); animation: pulse 1.0s ease-in-out infinite; }
 .t-badge.error, .t-badge.timeout, .t-badge.cancelled { color: var(--error); background: rgba(220, 38, 38, 0.08); }
 .t-latency { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-faint); }
-/* ToolPending 阶段：args 还没解析出来，灰底 + ellipsis 动画 + 提示文字 */
-.t-args-pending {
-  font-style: italic;
-  color: var(--text-faint);
-  opacity: 0.7;
-  animation: pulse 1.0s ease-in-out infinite;
-}
 /* pending block 比 running 更轻的左边框颜色（提示「还没真正开始执行」） */
 .block.tool.pending { border-left-color: var(--text-faint); opacity: 0.85; }
-.block.tool.pending .t-dot { background: var(--text-faint); }
+.block.tool.pending .t-dot { background: var(--text-faint); box-shadow: 0 0 0 3px rgba(156, 156, 164, 0.18); }
 
 .block .block-body { display: none; }
 .block.open .block-body { display: block; }
@@ -1279,7 +1288,17 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 }
 
 /* ---- Tasks 列表页 ---- */
-#tasks-page { max-width: 760px; margin: 0 auto; padding: 24px 28px; overflow-y: auto; }
+/* #polish: align-self: center 让 flex item 在 cross axis 居中（之前默认 stretch 导致
+   max-width + margin auto 失效，task 卡片横跨整页）。width: 100% 在 align-self: center 下
+   仍需声明才能撑满到 max-width。 */
+#tasks-page {
+  align-self: center;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 28px;
+  overflow-y: auto;
+}
 .page-head {
   display: flex; align-items: center; gap: 10px;
   margin-bottom: 16px;
@@ -1297,15 +1316,19 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 .icon-btn.danger:hover { border-color: var(--error); }
 
 .tasks-empty { text-align: center; padding: 80px 0 0; }
-.task-list { display: flex; flex-direction: column; gap: 8px; }
+/* #polish: max-width 100% 让 task-list 跟随父容器 #tasks-page 居中 */
+.task-list { display: flex; flex-direction: column; gap: 8px; max-width: 100%; }
 
+/* #polish: 去掉 1px border，改 soft shadow；max-width 720px 窄于 #tasks-page 760 留出边距 */
 .task-card {
   display: flex; align-items: stretch;
-  border: 1px solid var(--border); border-radius: 8px;
+  border-radius: 10px;
   background: var(--bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   overflow: hidden;
+  max-width: 720px;
 }
-.task-card:hover { border-color: var(--border-strong); }
+.task-card:hover { box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08); }
 .task-card-main {
   flex: 1; display: flex; gap: 10px; align-items: flex-start;
   padding: 10px 12px; background: none; border: none; text-align: left;

@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⛔ Before any feature: check the relevant spec first
+
+> **Rule**: 写任何 feature / UI 调整 / 协议扩展之前，**先看 `spec/` 下是否有对应文档**。
+> 这是设计意图与契约的唯一来源（不是 `~/.claude/plans/`，那是 scratch）。
+
+1. **看 spec 目录结构**：`spec/requirements/`（行为契约 / 设计意图）和 `spec/ui/`（HTML 视觉稿）。
+2. **看有没有子目录 CLAUDE.md**：本仓库主仓通常没有 per-dir CLAUDE.md，但下游子模块
+   （`MonoX/`、`MonoDesk/src/stream/`、`MonoDesk/src/components/` 等）若有自己的 CLAUDE.md，先读。
+3. **新建 feature** 必须在 `spec/requirements/<feature>.md` 起稿（必要时 `spec/ui/<feature>.html`
+   配独立视觉稿），然后才动代码。
+4. **小改 / 修 bug** 至少先看相关 spec 确认不破契约；不需要新建 spec 文件，但 commit message
+   要引用 spec 段落。
+
+**为什么**：`spec/` 是设计文档的版本化来源；`~/.claude/plans/` 只是本次会话的 scratch，重启就没了。
+spec-first 保证后续 Claude Code / 接手人都能从 git history 看到设计意图。
+
+**Spec 落地流程**（写代码前完成）：
+
+```
+①  ls spec/requirements/  →  看现有同类 spec 的格式与粒度
+②  写 spec/requirements/<feature>.md  →  行为契约 + 设计意图 + 验证步骤
+③  如有 UI 改动：写 spec/ui/<feature>.html  →  独立 HTML，无构建步骤，浏览器直接看
+④  写代码：src/components/* + src/stream/* + src/styles.css
+⑤  vitest 全过（120+） + 手工 e2e
+⑥  commit 时引用 spec 文件路径
+```
+
 ## Project Overview
 
 MonoDesk is the desktop channel implementation for [MonoX](https://github.com/halcyonway/MonoX). It connects to MonoX Runtime via WebSocket (ws://127.0.0.1:8765), streams token output with a jitter-buffered typewriter effect, and sends user input back. MonoDesk implements only the "view" and "speak" layers — no agent logic, tool execution, or memory.

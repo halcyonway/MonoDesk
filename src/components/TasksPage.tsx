@@ -2,6 +2,12 @@
 //
 // 数据源：tasksStore（async_task_created / status 帧增量 + async_task_list 全量）。
 // 挂载时主动 queryTaskList 拉一次；之后靠 ws 推帧增量更新。
+//
+// 2026-09 改版：spec/requirements/tasks-page-redesign.md
+// - 4px 左 status 色带（running=accent / completed=ok / failed=error / timed_out=thinking / cancelled=faint）
+// - title-first 层级：description 升为 title (14px/600)，meta 11px faint
+// - 右上 × 圆形 cancel 按钮（不再 stretch 整张卡）
+// - page head 两行结构（title 一行 / "1 active · N total" 一行）+ icon-only refresh
 
 import { useEffect, useSyncExternalStore } from "react";
 import { TASK_EVENT_RING, tasksStore, type TaskEntry } from "../store/tasks";
@@ -22,10 +28,24 @@ function elapsed(entry: TaskEntry): string {
   return sec < 60 ? `done in ${Math.floor(sec)}s` : `done in ${Math.floor(sec / 60)}m`;
 }
 
-function metaPreview(entry: TaskEntry): string {
-  const entries = Object.entries(entry.summary.meta || {}).slice(0, 3);
-  if (entries.length === 0) return "";
-  return entries.map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join(", ");
+function statusClass(status: string): string {
+  return "s-" + status.replace(/_/g, "-");
+}
+
+function RefreshIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M13.5 8a5.5 5.5 0 0 1-9.7 3.5M2.5 8a5.5 5.5 0 0 1 9.7-3.5M13.5 3v3h-3M2.5 13v-3h3" />
+    </svg>
+  );
+}
+
+function CancelIcon() {
+  return (
+    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M3 3l6 6M9 3l-6 6" />
+    </svg>
+  );
 }
 
 export function StatusDot({ status }: { status: string }) {
@@ -43,49 +63,47 @@ export function TaskCard({
 }) {
   const s = entry.summary;
   const running = s.status === "running";
-  const mp = metaPreview(entry);
+  const parentShort = shortId(s.parent_session_key || "—");
+  const timeoutMin = s.timeout_sec > 0 ? Math.round(s.timeout_sec / 60) : 0;
   return (
-    <div className="task-card" data-task-id={s.task_id}>
-      <button className="task-card-main" onClick={() => onOpenTask(s.task_id)}>
-        <StatusDot status={s.status} />
-        <div className="task-card-body">
-          <div className="task-title-row">
-            <span className="mono task-id">{shortId(s.task_id)}</span>
-            <span className="task-kind">{s.kind}</span>
-            <span className={"task-status " + s.status}>{s.status}</span>
-          </div>
-          <div className="task-desc" title={s.description}>
-            {s.description || <span className="faint">（无描述）</span>}
-          </div>
-          <div className="task-meta-row">
-            <span className="mono">parent: {s.parent_session_key || "-"}</span>
-            <span className="sep">·</span>
-            <span>{elapsed(entry)}</span>
-            {s.timeout_sec > 0 && (
-              <>
-                <span className="sep">·</span>
-                <span className="faint">timeout {Math.round(s.timeout_sec / 60)}m</span>
-              </>
-            )}
-            {mp && (
-              <>
-                <span className="sep">·</span>
-                <span className="mono faint">{mp}</span>
-              </>
-            )}
-          </div>
+    <div className={"task-card " + statusClass(s.status)} data-task-id={s.task_id}>
+      <button
+        className="task-card-main"
+        onClick={() => onOpenTask(s.task_id)}
+        type="button"
+      >
+        {/* 标题行：status dot + title (description) + status 文字 */}
+        <div className="task-head">
+          <span className="task-dot" />
+          <span className="task-title">{s.description || "（无描述）"}</span>
+          <span className="task-status-text">{s.status.replace(/_/g, " ")}</span>
+        </div>
+        {/* 副行：elapsed */}
+        <div className="task-sub">{elapsed(entry)}</div>
+        {/* meta 行：kind pill + parent + timeout */}
+        <div className="task-meta">
+          <span className="task-kind-pill">{s.kind}</span>
+          <span className="task-id-mono">{parentShort}</span>
+          {timeoutMin > 0 && (
+            <>
+              <span className="sep">·</span>
+              <span>{timeoutMin}m timeout</span>
+            </>
+          )}
         </div>
       </button>
       {running && (
         <button
           className="task-cancel"
           title="cancel task"
+          aria-label="cancel task"
           onClick={(e) => {
             e.stopPropagation();
             onCancel(s.task_id);
           }}
+          type="button"
         >
-          cancel
+          <CancelIcon />
         </button>
       )}
     </div>
@@ -104,6 +122,7 @@ export function TasksPage({
 }) {
   const tasks = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const running = tasks.filter((t) => t.summary.status === "running").length;
+  const total = tasks.length;
 
   useEffect(() => {
     ws?.queryTaskList();
@@ -112,14 +131,28 @@ export function TasksPage({
   return (
     <div id="tasks-page" className="container">
       <div className="page-head">
-        <h1>Tasks</h1>
-        <span className={"task-page-status" + (running > 0 ? " running" : "")}>
-          {running > 0 ? `${running} active` : "no active"}
-        </span>
-        <div className="actions">
-          <button className="icon-btn" title="refresh" onClick={() => ws?.queryTaskList()}>
-            ↻ refresh
+        <div className="page-head-row">
+          <h1 className="page-title">Tasks</h1>
+          <button
+            className="icon-btn-round"
+            title="refresh"
+            aria-label="refresh"
+            onClick={() => ws?.queryTaskList()}
+            type="button"
+          >
+            <RefreshIcon />
           </button>
+        </div>
+        <div className="page-sub">
+          {running > 0 ? (
+            <>
+              <span className="count-active">{running} active</span>
+              <span className="sep">·</span>
+              <span>{total} total</span>
+            </>
+          ) : (
+            <span>{total === 0 ? "no tasks" : `${total} total`}</span>
+          )}
         </div>
       </div>
 

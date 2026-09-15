@@ -21,13 +21,23 @@ function inline(s: string): string {
   s = esc(s);
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  // 顺序关键：裸 URL auto-link 必须**先于** image / link，否则会二次匹配 image src
-  // 或 link href 里的 URL（把已生成的 `<a href="URL">` 再嵌一层）。  先把 URL 包成
-  // `<a href="URL">URL</a>` 后，image/link regex 看不到 `[`，自然不匹配。
+  // 顺序关键：image / link 必须**先于** auto-link，否则长 URL（OSS 签名带 ?Expires=&KeyId=
+  // 之类）会被 auto-link 先截断，再让 image regex 看到 `<a href="...">...</a>` 而不是 URL，
+  // 整张图渲染失败。Markdown 规范里图片/链接 syntax 本来就优先于 autolink。
+  //
+  // `<url>` 形式（CommonMark angle-bracket URL）：允许 URL 含空白 / 换行。LLM 把 OSS
+  // 长 URL 自动换行时会自然跨行，普通 `([...)])` 形式会把 URL 截在换行处。
+  // 注意 esc() 在前面已经把 `<` `>` 转成 `&lt;` `&gt;`，所以 regex 也得匹配转义后的形式。
+  s = s.replace(/!\[([^\]]*)\]\(&lt;([\s\S]+?)&gt;\)/g, '<img src="$2" alt="$1" loading="lazy" />');
+  s = s.replace(/\[([^\]]+)\]\(&lt;([\s\S]+?)&gt;\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // 非 angle-bracket 形式：URL 段允许空白（多行），但不能含 `)`
+  s = s.replace(/!\[([^\]]*)\]\(([\s\S]*?)\)/g, '<img src="$2" alt="$1" loading="lazy" />');
+  s = s.replace(/\[([^\]]+)\]\(([\s\S]*?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // 顺序关键：auto-link 必须在 image/link **之后**，否则长 URL 被它截掉，image regex 看不到。
   // 停在空白或 `)`（避免吃掉 inline 引用收尾的右括号，例如 `(看 https://x.com)`）。
-  s = s.replace(/(https?:\/\/[^\s)]+)(?=[.,;:!?'"]*(?:\s|$|<))/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
-  s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy" />');
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // 负向 lookbehind `(?<![="])`：防止把 `<img src="https://...">` 属性值里的 URL 也包成 <a>，
+  // 否则 image 替换完后 auto-link 又把 src= 里的 URL 二次匹配 → `<img src="<a href="...">..."</a>"`。
+  s = s.replace(/(?<![="])(https?:\/\/[^\s)]+)(?=[.,;:!?'"]*(?:\s|$|<))/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   s = s.replace(/@@c(\d+)@@/g, (_m, i: string) => "<code>" + esc(codes[+i]) + "</code>");
   return s;
 }
@@ -96,6 +106,19 @@ function tryTable(
 }
 
 export function renderMarkdown(src: string): string {
+  // Pre-pass：把跨行 image / link syntax 合并到一行。
+  // LLM 把 OSS 长 URL（带 ?Expires=&Signature= 之类）在换行处自动断行时，会写出
+  // ![alt](https://...png?Expires=xxx
+  // &Signature=yyy)
+  // 这种格式。如果直接 split('\n') 后逐行 inline，image regex 在第一行找不到 `)`，
+  // 第二行的 `&Signature=...)` 也会落空，最后 auto-link 把 URL 截断包成 `<a>`。
+  // 这里先合并掉换行（保留其他空白）。
+  src = src.replace(/(!\[[^\]]*\]\(|\[[^\]]+\]\()\s*([\s\S]*?)\s*(\))/g, (_m, head, body, tail) => {
+    // 只在 body 确实跨行时才合并；单行原样返回
+    if (!/\n/.test(body)) return _m;
+    return head + body.replace(/\s+/g, " ").trim() + tail;
+  });
+
   const lines = src.split("\n");
   let out = "";
   let i = 0;

@@ -1,14 +1,21 @@
-// TaskDetailPage — 单个 async task 的实时流详情（spec §3.3）。
+// TaskDetailPage — 单个 async task 的实时流详情（spec §3.3 + tasks-feature-redesign.md）。
 //
 // 复用 StreamEngine 渲染管线：详情页内嵌一个独立 engine 实例（区别于 Chat 流那个），
 // 把 store 里的 per-task 帧转成 MonoDeskEvent 喂进去——session_key 用 task_id，
 // router 忽略 key 全部写进本页局部 state。复用 Conversation 渲染（markdown /
 // tool block / reasoning 折叠全套免费拿到）。
+//
+// 2026-09 改版：spec/requirements/tasks-feature-redesign.md
+// - title = description（不是 task_id），task_id 退到 sub 行 mono faint
+// - 4px 左 status 色带 + dot（跟 list 同款 s-<status> className 切换颜色）
+// - cancel = 右上 30x30 圆形 icon button（跟 list `.task-cancel` 同形态但放大）
+// - Meta 区从 dashed JSON dump 改为 key-value 网格
+// - back = icon-only round button
 
 import { useEffect, useRef, useState } from "react";
 import { StreamEngine, type Msg } from "../stream/engine";
 import { Conversation } from "./Conversation";
-import { StatusDot } from "./TasksPage";
+import { shortId } from "./TasksPage";
 import { tasksStore, useTask, type TaskEventFrame } from "../store/tasks";
 import type { MonoDeskEvent } from "../ws/protocol";
 import type { MonoDeskWS } from "../ws/client";
@@ -20,6 +27,26 @@ export function innerFrameToEvent(taskId: string, frame: TaskEventFrame): MonoDe
     type: frame.type,
     data: { ...(frame.data as object), session_key: taskId },
   } as MonoDeskEvent;
+}
+
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M10 3l-5 5 5 5" />
+    </svg>
+  );
+}
+
+function CancelIcon() {
+  return (
+    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M3 3l6 6M9 3l-6 6" />
+    </svg>
+  );
+}
+
+function statusClass(status: string): string {
+  return "s-" + status.replace(/_/g, "-");
 }
 
 export function TaskDetailPage({
@@ -76,51 +103,88 @@ export function TaskDetailPage({
 
   const s = entry?.summary;
   const running = s?.status === "running";
+  const title = s?.description || shortId(taskId);
+  const parentShort = shortId(s?.parent_session_key || "—");
+  const timeoutMin = s && s.timeout_sec > 0 ? Math.round(s.timeout_sec / 60) : 0;
+  const metaEntries = s?.meta ? Object.entries(s.meta) : [];
 
   return (
     <div id="task-detail" className="container">
-      <div className="page-head">
-        <button className="icon-btn" onClick={onBack} title="back">
-          ← back
-        </button>
-        <h1 className="task-detail-title">
-          <span className="mono">{taskId}</span>
-        </h1>
-        {s && (
-          <span className="task-detail-sub">
-            <StatusDot status={s.status} /> {s.status} · {s.kind} · parent:{" "}
-            <span className="mono">{s.parent_session_key || "-"}</span>
-            {s.timeout_sec > 0 && <> · timeout {Math.round(s.timeout_sec / 60)}m</>}
-          </span>
-        )}
-        <div className="actions">
+      {/* back 按钮 —— 独立一行，跟 page head 区分 */}
+      <button
+        className="icon-btn-round detail-back"
+        onClick={onBack}
+        title="back to tasks"
+        aria-label="back to tasks"
+        type="button"
+      >
+        <BackIcon />
+      </button>
+
+      {/* page head —— 跟 list 卡片同 design language：
+          4px stripe + dot + title + cancel。但 title 字号更大（18px），task_id 退到 sub */}
+      {s && (
+        <div className={"detail-head task-card " + statusClass(s.status)}>
+          <div className="task-card-main">
+            <div className="task-head">
+              <span className="task-dot" />
+              <span className="task-title task-title-lg">{title}</span>
+              <span className="task-status-text">{s.status.replace(/_/g, " ")}</span>
+            </div>
+            <div className="task-sub task-sub-id">{taskId}</div>
+            <div className="task-meta">
+              <span className="task-kind-pill">{s.kind}</span>
+              <span className="task-id-mono">{parentShort}</span>
+              {timeoutMin > 0 && (
+                <>
+                  <span className="sep">·</span>
+                  <span>{timeoutMin}m timeout</span>
+                </>
+              )}
+            </div>
+          </div>
           {running && (
-            <button className="icon-btn danger" onClick={() => ws?.cancelTask(taskId)}>
-              cancel
+            <button
+              className="task-cancel task-cancel-lg"
+              title="cancel task"
+              aria-label="cancel task"
+              onClick={() => ws?.cancelTask(taskId)}
+              type="button"
+            >
+              <CancelIcon />
             </button>
           )}
         </div>
-      </div>
+      )}
 
-      {s && Object.keys(s.meta || {}).length > 0 && (
-        <div className="task-detail-meta mono">
-          {Object.entries(s.meta).map(([k, v]) => (
-            <span key={k}>
-              {k}: {JSON.stringify(v)}{" "}
-            </span>
-          ))}
+      {/* Meta —— key-value 网格，不再是 JSON dump */}
+      {metaEntries.length > 0 && (
+        <div className="detail-section">
+          <div className="section-title">Meta</div>
+          <div className="detail-meta-grid">
+            {metaEntries.map(([k, v]) => (
+              <div key={k} className="meta-row">
+                <div className="meta-key">{k}</div>
+                <div className="meta-val">{JSON.stringify(v)}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
+      {/* Events —— 沿用 Conversation 渲染（tool block / reasoning） */}
       {msgs.length > 0 ? (
-        <Conversation
-          sessionKey={taskId}
-          msgs={msgs}
-          engine={engine}
-          onSend={() => {
-            /* 详情页不发消息 */
-          }}
-        />
+        <div className="detail-events">
+          <div className="section-title">Events</div>
+          <Conversation
+            sessionKey={taskId}
+            msgs={msgs}
+            engine={engine}
+            onSend={() => {
+              /* 详情页不发消息 */
+            }}
+          />
+        </div>
       ) : (
         <div className="task-detail-empty">
           {running ? "waiting for events…" : s ? `no stream captured (${s.status})` : "task not found"}

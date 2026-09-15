@@ -16,6 +16,8 @@ import { Sidebar, type SidebarPage } from "./components/Sidebar";
 import { SkillsPage } from "./components/SkillsPage";
 import { TasksPage } from "./components/TasksPage";
 import { TaskDetailPage } from "./components/TaskDetailPage";
+import { SelectionFab } from "./components/SelectionFab";
+import { FloatingAgentPanel } from "./components/FloatingAgentPanel";
 import { tasksStore } from "./store/tasks";
 import { TraceDrawer } from "./components/TraceDrawer";
 import { TraceClient } from "./observability/client";
@@ -30,6 +32,7 @@ import {
   loadActiveSession,
   loadHistories,
   loadSessions,
+  newForkSession,
   newSession,
   saveActiveSession,
   saveHistories,
@@ -151,6 +154,22 @@ export default function App() {
   const [sessionStates, setSessionStates] = useState<Record<string, SessionState>>(
     () => loadSessionStates()
   );
+
+  // Floating agent panel：选中片段 → 弹窗 → 起新 fork session
+  // null 表示 panel 关着。parentKey 是当前主 session，forkKey 是新 session。
+  // session 列表里 fork session 是真实存在的（sidebar 可见）—— 即使关掉 panel
+  // 也只是隐藏窗口，session 留着不丢。
+  const [floatingPanel, setFloatingPanel] = useState<
+    | {
+        parentKey: string;
+        parentTitle: string;
+        parentLastMsg: string | null;
+        snippet: string;
+        forkKey: string;
+        forkTitle: string;
+      }
+    | null
+  >(null);
 
   // 路由策略：每个 WS event 都带 data.session_key（来自 MonoX RuntimeServer），
   // 引擎按这个 key 把 callback 写到对应 sessionStates entry。**不再**用全局
@@ -403,6 +422,78 @@ export default function App() {
     setCurrentPage("tasks");
   }, []);
 
+  // Floating agent panel — 选中片段后从 #conversation 拉起
+  const onBranchFromSelection = useCallback(
+    (snippet: string) => {
+      if (!snippet.trim()) return;
+      const s = snippet.trim().slice(0, 4000); // 上限 4000 字避免 user_input 过大
+      const parentTitle =
+        sessions.find((x) => x.key === session)?.title ?? session;
+      // 取主会话最近一条 assistant msg（≤200 字）作为上下文锚
+      const parentMsgs = sessionStates[session]?.msgs ?? [];
+      const lastAssistant = [...parentMsgs].reverse().find((m) => m.role === "assistant");
+      const parentLastMsg = lastAssistant
+        ? lastAssistant.text.trim().slice(0, 200) +
+          (lastAssistant.text.length > 200 ? "…" : "")
+        : null;
+      const fork = newForkSession(session, s);
+      // 把 fork session 加进 sidebar（持久化）—— Panel 关掉也保留
+      const next = [...sessions, fork];
+      setSessions(next);
+      saveSessions(next);
+      setFloatingPanel({
+        parentKey: session,
+        parentTitle,
+        parentLastMsg,
+        snippet: s,
+        forkKey: fork.key,
+        forkTitle: fork.title,
+      });
+    },
+    [session, sessions, sessionStates]
+  );
+
+  const onCloseFloatingPanel = useCallback(() => {
+    setFloatingPanel(null);
+  }, []);
+
+  const onExpandFloatingPanel = useCallback(() => {
+    if (!floatingPanel) return;
+    switchSession(floatingPanel.forkKey);
+    setFloatingPanel(null);
+  }, [floatingPanel, switchSession]);
+
+  // Panel 内的 send：把 snippet + parent context 包成单条 user_input 发出去
+  const onPanelSend = useCallback(
+    (text: string, attachments?: Attachment[]) => {
+      if (!floatingPanel) return;
+      const { parentKey, parentLastMsg, snippet, forkKey } = floatingPanel;
+      const composed = [
+        parentLastMsg ? `[From session "${parentKey}" — last assistant reply]\n${parentLastMsg}\n` : "",
+        `[Selected snippet]\n${snippet}\n`,
+        `[Your question]\n${text}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      engine.startTurn(composed, forkKey, attachments);
+      wsRef.current?.send({
+        type: "user_input",
+        data: {
+          text: composed,
+          session_key: forkKey,
+          attachments,
+          meta: {
+            fork_from: parentKey,
+            snippet,
+            parent_context: parentLastMsg,
+            ...(selectedProvider ? { model_provider: selectedProvider } : {}),
+          },
+        },
+      });
+    },
+    [floatingPanel, engine, selectedProvider]
+  );
+
   return (
     <div id="app">
       <Sidebar
@@ -478,6 +569,28 @@ export default function App() {
           onClose={onCloseDrawer}
         />
       </div>
+
+      {/* Floating agent panel —— 选中片段后弹出。floatingPanel 为 null 时不渲染。 */}
+      {floatingPanel && (
+        <FloatingAgentPanel
+          parentKey={floatingPanel.parentKey}
+          parentTitle={floatingPanel.parentTitle}
+          parentLastMsg={floatingPanel.parentLastMsg}
+          snippet={floatingPanel.snippet}
+          forkKey={floatingPanel.forkKey}
+          forkTitle={floatingPanel.forkTitle}
+          engine={engine}
+          msgs={sessionStates[floatingPanel.forkKey]?.msgs ?? []}
+          onSend={onPanelSend}
+          onClose={onCloseFloatingPanel}
+          onExpand={onExpandFloatingPanel}
+        />
+      )}
+
+      {/* SelectionFab —— 只在 chat 页生效（Tasks/Skills 内的选中不触发 branch）。 */}
+      {currentPage === "chat" && (
+        <SelectionFab onBranch={onBranchFromSelection} />
+      )}
     </div>
   );
 }

@@ -44,7 +44,7 @@ describe("TasksPage", () => {
     expect(fakeWs.queryTaskList).toHaveBeenCalled();
   });
 
-  it("有任务 → 卡片渲染 id / 描述 / parent；running 显示 cancel", () => {
+  it("有任务 → 卡片渲染 title (description) / kind / parent；running 显示 cancel icon", () => {
     const store = makeEntry();
     render(
       <TasksPage
@@ -53,17 +53,24 @@ describe("TasksPage", () => {
         store={store}
       />
     );
+    // title-first: description 升为 title
     expect(screen.getByText("review this PR")).toBeTruthy();
-    expect(screen.getByText(/parent: default/)).toBeTruthy();
-    const cancel = screen.getByText("cancel");
+    // kind pill 渲染
+    expect(screen.getByText("subagent")).toBeTruthy();
+    // status 文字
+    expect(screen.getByText("running")).toBeTruthy();
+    // parent short id 渲染（去掉 "parent: " 前缀）
+    expect(screen.getByText("default")).toBeTruthy();
+    // cancel 是右上角 icon button，按 title 查找
+    const cancel = screen.getByTitle("cancel task");
     fireEvent.click(cancel);
     expect(fakeWs.cancelTask).toHaveBeenCalledWith("t_4f9ea1b2c3d4");
   });
 
-  it("终态任务不显示 cancel", () => {
+  it("终态任务不显示 cancel icon", () => {
     const store = makeEntry({ status: "completed" });
     render(<TasksPage ws={fakeWs} onOpenTask={() => {}} store={store} />);
-    expect(screen.queryByText("cancel")).toBeNull();
+    expect(screen.queryByTitle("cancel task")).toBeNull();
   });
 
   it("点卡片 → onOpenTask(taskId)", () => {

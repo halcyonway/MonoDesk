@@ -122,11 +122,9 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
     <div className={"block tool " + (running ? "running" : "done") + (open ? " open" : "") + (pending ? " pending" : "")}>
       <div className="block-head" onClick={() => setOpen((v) => !v)}>
         <span className="label"><span className="t-dot" />{child.name}</span>
-        {child.args ? (
-          <span className="t-args">{child.args}</span>
-        ) : pending ? (
-          <span className="t-args t-args-pending">parsing args…</span>
-        ) : null}
+        {/* #polish: 删除 t-args 显示 —— args 在 mono 截断显示里看不出有用信息（fork_task
+            description 长文本 / bash 命令截断后无意义）。child.args 字段保留，折叠展开 body 仍可见
+            （与 fork_task 等 task tool 一致）；header 只剩 name + badge + latency。 */}
         <span className="spacer" />
         <span className={"t-badge " + badge}>{badge}</span>
         <span className="t-latency">

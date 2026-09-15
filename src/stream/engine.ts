@@ -128,7 +128,7 @@ const TARGET_BUFFER_MS = 120;    // 希望维持的 buffer 积压
 const MAX_BUFFER_MS = 1500;      // 积压过大则跳过（模型太快）
 const TICK_MS = 33;              // 30fps tick
 const CHARS_PER_TICK = 3;        // 每 tick 解锁 3 个字符（≈ 90 cps @ 30fps）
-const REASONING_CPS = 90;        // reasoning 同速率解锁，保持视觉一致
+const REASONING_CPS = 30;        // reasoning 字符打字机：~1 字/tick @ 30fps（每个字视觉独占一帧）
 
 // ---- Per-session stream state (#74 + #78) ----
 //
@@ -595,10 +595,9 @@ export class StreamEngine {
     // 切 provider 后下个 turn 即生效，覆盖 hello.model 默认值。
     if (model) cb.setModel(model);
     const tok = m.tokens || {};
-    const text =
-      "step " + m.step_idx + " · " + fmtMs(m.latency_ms) + " · " +
-      (tok.completion_tokens ?? "?") + " tok · " + (m.tool_calls_count || 0) + " tool";
-    this.appendChild(cb, sk, { id: nextId(), kind: "note", text });
+    // #polish：删除 step N · Xms · Ytok · Ztool 的 note child。
+    // step_idx 顺序错乱、tool_calls_count 字段语义不明（per-step vs 累计），
+    // msg.tokens / msg.latencyMs / step sidebar 已经承载这部分信息，不应在 children 里再出现一次。
     cb.setSteps((prev) => [
       ...prev,
       { idx: m.step_idx, latencyMs: m.latency_ms, tokens: tok.completion_tokens ?? 0, tools: m.tool_calls_count || 0 },

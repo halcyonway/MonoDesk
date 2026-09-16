@@ -47,6 +47,18 @@ export function newSession(): SessionItem {
   return { key: `${CHANNEL_NAME}:${newSessionId()}`, title: `Chat ${nextChatCounter()}` };
 }
 
+// 新建 fork 会话（spec/requirements/floating-agent-from-selection.md）：
+// - key 前缀 monodesk:fork-<ts>-<rand> 跟普通 Chat session 区分
+// - 标题从 snippet 前 30 字截取，自动加 …
+// - 不占用 chatCounter（fork 不是"第 N 个 Chat"）
+export function newForkSession(parentKey: string, snippet: string): SessionItem {
+  const ts = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 6);
+  const trimmed = snippet.trim().replace(/\s+/g, " ").slice(0, 30);
+  const title = trimmed ? `Fork: ${trimmed}${snippet.length > 30 ? "…" : ""}` : `Fork from ${parentKey}`;
+  return { key: `${CHANNEL_NAME}:fork-${ts}-${rand}`, title };
+}
+
 // 旧版曾把主会话 key 写成 "monodesk:default"，迁回共享主会话 "default"。
 function migrateKey(key: string): string {
   return key === "monodesk:default" ? "default" : key;

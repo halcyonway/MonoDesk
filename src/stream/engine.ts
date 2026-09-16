@@ -51,7 +51,17 @@ export type Child =
   | { id: string; kind: "error"; text: string };
 
 export type Msg =
-  | { id: string; role: "user"; text: string; attachments?: Attachment[] }
+  | {
+      id: string;
+      role: "user";
+      text: string;
+      attachments?: Attachment[];
+      // Fork session 首条 user msg 会把 snippet + parent context 拼到 text 里发出去
+      // （给 agent 看上下文用）。这里存「用户实际输入的纯净问题」，UI 渲染时
+      // 优先显示这个，隐藏 prefix 那一坨 `[From session...] [Selected snippet] [Your question]` 标签。
+      // 非 fork / 后续追问没有这个字段，UI 退回到显示 msg.text。
+      forkQuestion?: string;
+    }
   | {
       id: string;
       role: "assistant";
@@ -293,13 +303,16 @@ export class StreamEngine {
 
   // ---- 用户动作 ----
 
-  startTurn(text: string, sessionKey: string, attachments?: Attachment[]) {
+  startTurn(text: string, sessionKey: string, attachments?: Attachment[], opts?: { forkQuestion?: string }) {
     // startTurn 由 App 主动调用（不在 dispatch 路径上），所以没有 ev.data.session_key
     // 可读 —— 必须由 App 显式传入「这条 user_input 要进哪个 session」。
+    //
+    // forkQuestion：fork session 首条 user msg 会把 snippet + parent context 拼到 text 里
+    // 发给 agent；这里存「用户实际输入的纯净问题」，UI 渲染时优先显示这个（详见 Msg type）。
     const cb = this.router(sessionKey);
     cb.setMsgs((prev) => [
       ...prev,
-      { id: nextId(), role: "user", text, attachments },
+      { id: nextId(), role: "user", text, attachments, forkQuestion: opts?.forkQuestion },
       { id: nextId(), role: "assistant", children: [], pending: true },
     ]);
     this.resetTurn(cb, sessionKey);

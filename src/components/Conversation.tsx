@@ -89,6 +89,27 @@ const ReasonBlock = memo(function ReasonBlock({
 
 // ---- 工具块：running 时本地计时，done 时自动折叠展示结果 ----
 
+// bash tool 专用：args 是 JSON 字符串，从中提取 LLM 填的 `target` 字段。
+// 优先级：target（设计意图）> cmd（fallback，截断后的 bash 命令）。
+// 长度上限 30 字符（用户原话「10 字以内」≈ 30 ASCII），超出加 …
+// 返回 null → UI 不渲染。
+function bashSummary(args: string | undefined): string | null {
+  if (!args) return null;
+  let obj: { target?: unknown; cmd?: unknown } | null = null;
+  try {
+    obj = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  const t = typeof obj?.target === "string" ? obj.target.trim() : "";
+  const MAX = 30;
+  if (t) return t.length > MAX ? t.slice(0, MAX) + "…" : t;
+  // fallback：target 没填就用 cmd，空白合并
+  const c = typeof obj?.cmd === "string" ? obj.cmd.replace(/\s+/g, " ").trim() : "";
+  if (!c) return null;
+  return c.length > MAX ? c.slice(0, MAX) + "…" : c;
+}
+
 function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
   const [elapsed, setElapsed] = useState(0);
   const running = child.state === "running";
@@ -122,6 +143,13 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
     <div className={"block tool " + (running ? "running" : "done") + (open ? " open" : "") + (pending ? " pending" : "")}>
       <div className="block-head" onClick={() => setOpen((v) => !v)}>
         <span className="label"><span className="t-dot" />{child.name}</span>
+        {/* bash tool 专属：在 label 旁展示 LLM 填的 target（人类可读的一句话总结），
+            超过 30 字符前端截断（+ …），让长 tool 序列里一眼看到「这条 bash 在干啥」。
+            其它 tool 不渲染。child.args 全量保留在折叠 body 里，head 只显示 target。 */}
+        {child.name === "bash" && (() => {
+          const summary = bashSummary(child.args);
+          return summary ? <span className="t-summary" title={summary}>{summary}</span> : null;
+        })()}
         {/* #polish: 删除 t-args 显示 —— args 在 mono 截断显示里看不出有用信息（fork_task
             description 长文本 / bash 命令截断后无意义）。child.args 字段保留，折叠展开 body 仍可见
             （与 fork_task 等 task tool 一致）；header 只剩 name + badge + latency。 */}
@@ -224,10 +252,31 @@ function MsgView({
             <div className="msg-attachments">
               {msg.attachments.map((a) => (
                 <div key={a.url} className="msg-attachment-thumb">
-                  {/* a.url 现在是绝对 HTTP URL（http://127.0.0.1:8768/debug/attachments/xxx）
-                      浏览器/Tauri/<img> 三方都能直接加载；不需要 file:// 前缀（跨 origin 被拦）。 */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={a.url} alt={a.name} title={a.name} />
+                  {/* 按 mime 分流渲染：
+                      - image/* → <img> 正常内嵌
+                      - application/pdf → <object> 调浏览器原生 PDF viewer
+                        （Chromium / Safari / Tauri WebView 都自带）
+                      - 其它（text/* / json）→ 走 doc-tool-universal spec §6 「v2 美化」；
+                        v1 只显示文件名 + mime，缩略图位置放个 icon 让 layout 不变 */}
+                  {a.mime.startsWith("image/") ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.url} alt={a.name} title={a.name} />
+                  ) : a.mime === "application/pdf" ? (
+                    <object
+                      data={a.url}
+                      type="application/pdf"
+                      aria-label={a.name}
+                      title={a.name}
+                    >
+                      {/* object 浏览器不支持时（罕见）的 fallback：点链接打开 */}
+                      <a href={a.url} target="_blank" rel="noreferrer">{a.name}</a>
+                    </object>
+                  ) : (
+                    <div className="doc-thumb" title={`${a.name} (${a.mime})`}>
+                      <span className="doc-thumb-icon" aria-hidden>📄</span>
+                      <span className="doc-thumb-name">{a.name}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

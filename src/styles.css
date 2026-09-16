@@ -383,6 +383,18 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
 }
 .block-head .meta { color: var(--text-faint); font-size: 11px; }
 .block-head .spacer { flex: 1; }
+/* bash tool 专用：在 label 后展示 LLM 填的 target，dim 色 + 截断，省得长 tool 序列里
+   看不到「这条在干啥」。max-width 限制 + ellipsis；hover title 看全文。 */
+.block-head .t-summary {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+}
 .block-head .chev {
   color: var(--text-faint); transition: transform 0.12s;
   flex: none;

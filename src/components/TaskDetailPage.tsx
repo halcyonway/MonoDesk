@@ -108,16 +108,30 @@ export function TaskDetailPage({
   const timeoutMin = s && s.timeout_sec > 0 ? Math.round(s.timeout_sec / 60) : 0;
   // Meta 区块：fallback 字段（页头没显示的） + LLM 填的 meta（覆盖 fallback）。
   // LLM 不填 meta 时只显示 fallback，避免「有的 task 有 Meta 有的没」UI 不一致。
+  // 每个 fallback 字段单独 try/catch —— 任一 NaN / 无效时间戳不能让整个 component 崩溃。
+  const toIso = (ts: unknown): string | null => {
+    if (typeof ts !== "number" || !Number.isFinite(ts)) return null;
+    try {
+      return new Date(ts * 1000).toISOString();
+    } catch {
+      return null;
+    }
+  };
   const fallbackMeta: Record<string, unknown> = {};
   if (s) {
-    fallbackMeta["created_at"] = new Date(s.created_at * 1000).toISOString();
+    const ci = toIso(s.created_at);
+    if (ci) fallbackMeta["created_at"] = ci;
     if (s.started_at && s.started_at !== s.created_at) {
-      fallbackMeta["started_at"] = new Date(s.started_at * 1000).toISOString();
+      const si = toIso(s.started_at);
+      if (si) fallbackMeta["started_at"] = si;
     }
     if (s.finished_at) {
-      fallbackMeta["finished_at"] = new Date(s.finished_at * 1000).toISOString();
+      const fi = toIso(s.finished_at);
+      if (fi) fallbackMeta["finished_at"] = fi;
       const dur = s.finished_at - (s.started_at ?? s.created_at);
-      if (dur > 0) fallbackMeta["duration_sec"] = Number(dur.toFixed(1));
+      if (typeof dur === "number" && Number.isFinite(dur) && dur > 0) {
+        fallbackMeta["duration_sec"] = Number(dur.toFixed(1));
+      }
     }
     if (s.error) fallbackMeta["error"] = s.error;
     if (s.final_text) fallbackMeta["final_text"] = s.final_text;

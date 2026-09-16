@@ -1634,8 +1634,14 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 }
 
 .detail-events {
-  /* 让内嵌 Conversation 跟 page head 视觉对齐 —— 不强制 max-width，
-     #task-detail 已是 760，Conversation 默认也是 760，无需额外约束 */
+  /* #task-detail 是 column flex，detail-events 作为「Events」段要撑满剩余高度
+     （back / head / Meta 都是 flex: 0 auto），把高度传给内嵌 Conversation。
+     之前没设 flex:1，detail-events 只取自身内容高度，#conversation-wrap
+     拿不到约束高度 → 滚动条出不来。跟 Skills page 同样的 flex chain 套路。 */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .task-detail-empty {

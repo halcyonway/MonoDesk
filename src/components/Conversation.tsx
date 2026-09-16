@@ -252,30 +252,28 @@ function MsgView({
             <div className="msg-attachments">
               {msg.attachments.map((a) => (
                 <div key={a.url} className="msg-attachment-thumb">
-                  {/* 按 mime 分流渲染：
+                  {/* 按 mime 分流渲染（#16 polish）：
                       - image/* → <img> 正常内嵌
-                      - application/pdf → <object> 调浏览器原生 PDF viewer
-                        （Chromium / Safari / Tauri WebView 都自带）
-                      - 其它（text/* / json）→ 走 doc-tool-universal spec §6 「v2 美化」；
-                        v1 只显示文件名 + mime，缩略图位置放个 icon 让 layout 不变 */}
+                      - 其它（含 PDF / txt / csv / json）→ doc-thumb 卡片
+                        （📄 + 文件名 + mime），点击 → 新 tab 打开原文件
+                      之前 PDF 单独走 <object> 浏览器原生 viewer，但小尺寸（56×56）
+                      容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom
+                      toolbar，丑且不实用。bubble 是「文件名 + 打开」入口，不是
+                      阅读器。完整 PDF 体验让用户点链接到 browser/system viewer 看。 */}
                   {a.mime.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.url} alt={a.name} title={a.name} />
-                  ) : a.mime === "application/pdf" ? (
-                    <object
-                      data={a.url}
-                      type="application/pdf"
-                      aria-label={a.name}
-                      title={a.name}
-                    >
-                      {/* object 浏览器不支持时（罕见）的 fallback：点链接打开 */}
-                      <a href={a.url} target="_blank" rel="noreferrer">{a.name}</a>
-                    </object>
                   ) : (
-                    <div className="doc-thumb" title={`${a.name} (${a.mime})`}>
+                    <a
+                      className="doc-thumb"
+                      href={a.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`${a.name} (${a.mime})`}
+                    >
                       <span className="doc-thumb-icon" aria-hidden>📄</span>
                       <span className="doc-thumb-name">{a.name}</span>
-                    </div>
+                    </a>
                   )}
                 </div>
               ))}

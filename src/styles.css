@@ -663,15 +663,43 @@ html[data-theme="dark"] #composer {
   margin-top: 8px;
 }
 .msg-attachment-thumb {
-  width: 72px; height: 72px;
-  border-radius: 8px; overflow: hidden;
+  border-radius: 8px;
   border: 1px solid var(--border);
   cursor: pointer;
+  background: var(--bg-panel);
+  transition: background 0.12s, border-color 0.12s;
 }
-.msg-attachment-thumb img {
-  width: 100%; height: 100%; object-fit: cover; display: block;
+.msg-attachment-thumb:hover { opacity: 0.92; }
+/* image attachment：72x72 方形 cover-fill，跟 composer 预览一致 */
+.msg-attachment-thumb > img {
+  display: block;
+  width: 72px; height: 72px;
+  object-fit: cover;
+  border-radius: 7px;
 }
-.msg-attachment-thumb:hover { opacity: 0.85; }
+/* doc attachment（PDF / txt / md / csv / json）：卡片式 auto 宽 + padding，
+   icon + 文件名横向排。文件名过长 ellipsis 截断。点 → 新 tab 打开原文件。 */
+.msg-attachment-thumb > .doc-thumb {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  min-width: 72px; max-width: 240px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+.msg-attachment-thumb > .doc-thumb:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.msg-attachment-thumb > .doc-thumb-icon {
+  font-size: 18px;
+  flex: none;
+}
+.msg-attachment-thumb > .doc-thumb-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 500;
+}
 
 /* ---------- attachment preview strip (composer) ---------- */
 .attachment-preview {

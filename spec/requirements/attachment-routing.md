@@ -77,15 +77,21 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 后续优化再统一按本 spec 2.2 的 mime 规则接入 `<object>` / doc-thumb。
 
 **位置 B：user message bubble**（`Conversation.tsx` 的 `msg-attachments`）——
-按 mime 三类路由：
+按 mime **两类**路由（#16 polish 后）：
 
 | mime 分支 | 元素 | 说明 |
 |---|---|---|
-| `image/*` | `<img src={a.url} alt={a.name} title={a.name} />` | 原行为，图片正常内嵌 |
-| `application/pdf` | `<object data={a.url} type="application/pdf">` | 调浏览器原生 PDF viewer（Chromium / Safari / Tauri WebView 都自带），多页 PDF 出滚动条 |
-| 其它（text/* / json） | `<div class="doc-thumb">📄 {a.name}</div>` | v1 只显示文件名 + mime，layout 不变；v2 美化见 `doc-tool-universal.md` §6 |
+| `image/*` | `<img src={a.url} alt={a.name} title={a.name} />` | 72×72 方形 cover-fill |
+| 其它（含 `application/pdf` / text/* / json） | `<a class="doc-thumb" href={a.url} target="_blank">📄 {a.name}</a>` | 卡片式 auto 宽 + padding，icon + 文件名横向；点 → 新 tab 浏览器/system viewer 打开原文件 |
 
-`<object>` 内放 `<a>` fallback（浏览器不支持 `<object>` PDF 时点链接打开）。
+**不再用 `<object>`**：之前 PDF 单独走 `<object>` 调浏览器原生 PDF viewer，但
+小尺寸（72×72）容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom
+toolbar，丑且不实用。bubble 是「文件名 + 打开」入口，不是阅读器；完整 PDF
+体验让用户点链接到 browser/system viewer 看。
+
+**doc-thumb 跟 composer 预览保持一致风格**（`📄 + 文件名`，hover 背景变），
+但 bubble 里 doc-thumb 多了「点击新 tab 打开」行为，composer 里是「点 → lightbox
+放大 / remove」。
 
 **为什么不用 `<iframe>` 替代 `<object>`**：iframe sandbox 更严但 Safari / Tauri WebView
 对 PDF iframe 支持参差，object 是最稳的 cross-engine 选择。
@@ -241,7 +247,8 @@ cd MonoDesk && npm run dev
    出现在 composer 预览（v1 仍是 broken image，但能 remove）→ 点 send →
    MonoX 收到 user message 带 PDF attachment。
 3. **PDF 在 bubble 渲染** —— 上传完 PDF 后 user message bubble 里的缩略图
-   是 PDF viewer（`<object>`），不是 broken icon。
+   是「📄 + 文件名」doc-thumb 卡片（不是嵌入的 PDF viewer），hover 时背景变
+   `--bg-hover`，点击 → 新 tab 浏览器/system viewer 打开原 PDF。
 4. **csv 上传** —— 拖入 .csv → bubble 缩略图是 📄 + 文件名（doc-thumb）。
 5. **paste 文字** —— 在 textarea 里 Cmd+V 一段文字 → 文字进 textarea，
    **不**出现附件预览。

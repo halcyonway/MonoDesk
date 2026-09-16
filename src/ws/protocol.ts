@@ -186,7 +186,7 @@ export interface AsyncTaskSnapshotData {
 }
 
 export interface Attachment {
-  url: string;      // absolute HTTP URL pointing at MonoX's debug server (e.g. http://127.0.0.1:8768/debug/attachments/<uuid>.png) — backend serves the bytes for both <img> rendering and multimodalunderstand tool
+  path: string;     // absolute local path on disk (MonoX tmp dir) — Tauri desktop loads via convertFileSrc(path); tools (read_doc / multimodalunderstand) read directly
   name: string;     // original filename
   mime: string;     // MIME type, e.g. "image/png"
 }

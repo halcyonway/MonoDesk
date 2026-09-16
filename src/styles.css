@@ -677,11 +677,9 @@ html[data-theme="dark"] #composer {
   object-fit: cover;
   border-radius: 7px;
 }
-/* doc attachment（PDF / txt / md / csv / json）：豆包风格卡片
-   —— 左 icon + 右文件名 + mime label 横排。auto 宽（最长文件名决定），
-   不渲染缩略图（PDF 浏览器原生第一页渲染不可靠：mime 准确性 / 文件大小 /
-   引擎差异），文件名 + mime label 是足够信息；点 → 新 tab 浏览器/system
-   viewer 打开原文件。 */
+/* doc attachment (PDF / txt / md / csv / json)：横向布局，左 icon +
+   右文件名 + mime label；不渲染缩略图（PDF 浏览器原生第一页渲染不可靠），
+   文件名 + mime label 是足够信息；点 → 新 tab 浏览器/system viewer 打开。 */
 .msg-attachment-thumb > .doc-thumb {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 12px;

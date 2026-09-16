@@ -308,27 +308,21 @@ function MsgView({
           {displayText && <p>{displayText}</p>}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="msg-attachments">
-              {msg.attachments.map((a) => (
-                <div key={a.url} className="msg-attachment-thumb">
-                  {/* 两路由按 mime 分流：
-                      - image/* → <img> 72×72 方形 cover-fill
-                      - 其它（PDF / txt / md / csv / json）→ doc-thumb 卡片
-                        （SVG icon + 文件名 + mime label），点击 → 新 tab 打开原文件
-                      **不渲染缩略图预览**（用户原话「不需要缩略图，有文件信息即可」——
-                      之前 PDF 走 <img src=...pdf> 让浏览器自动渲染第一页，但实际
-                      截图里 PDF bubble 是空白 / broken image（Image #26），PDF
-                      缩略图依赖浏览器引擎 + 文件大小 + mime 准确性，不可靠）。
-                      跟豆包方案一致：文件名 + mime 是足够信息，点链接 → 浏览器/PDF
-                      reader 看完整版。
-                      **不渲染 × 关闭按钮**（用户原话「发出去就不需要关闭按钮」——
-                      bubble 是历史消息视图，附件不可改）。 */}
+              {msg.attachments.map((a) => {
+                // Tauri desktop 用 convertFileSrc 把本地路径转成 asset:// URL，
+                // 浏览器可以 <img src> 渲染；非 Tauri（dev browser）直接用 file:// 兜底。
+                const src = (window as any).__TAURI__?.core?.convertFileSrc
+                  ? (window as any).__TAURI__.core.convertFileSrc(a.path)
+                  : `file://${a.path}`;
+                return (
+                <div key={a.path} className="msg-attachment-thumb">
                   {a.mime.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={a.url} alt={a.name} title={a.name} />
+                    <img src={src} alt={a.name} title={a.name} />
                   ) : (
                     <a
                       className="doc-thumb"
-                      href={a.url}
+                      href={src}
                       target="_blank"
                       rel="noreferrer"
                       title={`${a.name} (${a.mime})`}
@@ -341,7 +335,8 @@ function MsgView({
                     </a>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

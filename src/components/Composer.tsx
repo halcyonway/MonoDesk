@@ -3,7 +3,7 @@ import type { StatusState, Attachment } from "../ws/protocol";
 import { fmtMs } from "../stream/markdown";
 
 const UPLOAD_URL =
-  (import.meta.env.VITE_DEBUG_URL ?? "http://127.0.0.1:8768") +
+  (import.meta.env.VITE_MONOX_UPLOAD_URL ?? "http://127.0.0.1:8768") +
   "/debug/attachments/upload";
 
 // MonoDesk 上传白名单 —— 必须跟 MonoX read_doc tool 支持的格式 1:1 同步。
@@ -139,7 +139,10 @@ export function Composer({
       const resp = await fetch(UPLOAD_URL, {
         method: "POST",
         body: file,
-        headers: { "Content-Type": file.type || "application/octet-stream" },
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name),
+        },
       });
       if (!resp.ok) {
         // 别再静默吞：server 返回 4xx/5xx 时至少打到 console，让用户/调试者看见。
@@ -147,8 +150,8 @@ export function Composer({
         console.error("attachment upload failed", resp.status, text);
         return null;
       }
-      const json = (await resp.json()) as { url: string; name: string; mime: string };
-      return { url: json.url, name: json.name, mime: json.mime };
+      const json = (await resp.json()) as { path: string; name: string; mime: string };
+      return { path: json.path, name: json.name, mime: json.mime };
     } catch (err) {
       // 网络层错误（CORS preflight 失败 / connection refused / abort）也打日志。
       // 之前这里 return null 让用户根本看不到上传失败，现在调试能看见。

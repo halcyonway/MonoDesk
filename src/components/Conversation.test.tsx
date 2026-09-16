@@ -307,3 +307,112 @@ describe("Conversation inline agent metrics (#70)", () => {
     expect(onInspectRun).toHaveBeenCalledWith("t_xyz");
   });
 });
+
+describe("Conversation bash tool summary (bash-target)", () => {
+  // spec/requirements/bash-target.md：bash tool 的 args.target 是 LLM 写的
+  // 「在干啥」一句中文，纯展示用。MonoDesk 渲染时优先取 target，缺则
+  // fallback 到 cmd 前 30 字符；超长截断。
+  //
+  // child.args 是 JSON-encoded string（engine 那边存的是 args 字符串，
+  // 跟 OpenAI tool_calls arguments 兼容），不是对象。
+
+  function bashMsg(argsObj: Record<string, unknown>, resultStatus: "ok" | "error" = "ok"): Msg {
+    return {
+      id: "m1",
+      role: "assistant",
+      children: [
+        {
+          id: "c1",
+          kind: "tool",
+          name: "bash",
+          args: JSON.stringify(argsObj),
+          state: "done",
+          latencyMs: 343,
+          result: {
+            call_id: "c1",
+            status: resultStatus,
+            stdout: "ok\n",
+            stderr: "",
+            exit_code: 0,
+            truncated: false,
+            budget_id: null,
+          },
+        },
+      ],
+    };
+  }
+
+  it("renders target as the summary next to the BASH label", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey="s1"
+        msgs={[bashMsg({ cmd: "ls -la .monox/workspace/", target: "列出 workspace 内容" })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const summary = container.querySelector(".block.tool .t-summary");
+    expect(summary).toBeTruthy();
+    expect(summary?.textContent).toBe("列出 workspace 内容");
+  });
+
+  it("falls back to first 30 chars of cmd when target is missing", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey="s1"
+        msgs={[bashMsg({ cmd: "ls -la .monox/workspace/" })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const summary = container.querySelector(".block.tool .t-summary");
+    expect(summary).toBeTruthy();
+    // cmd 折叠空白 + 截前 30 字符
+    expect(summary?.textContent).toBe("ls -la .monox/workspace/");
+  });
+
+  it("truncates overlong target with ellipsis at 30 chars", () => {
+    const engine = makeEngine();
+    const long = "x".repeat(60);
+    const { container } = render(
+      <Conversation
+        sessionKey="s1"
+        msgs={[bashMsg({ cmd: "ls", target: long })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const summary = container.querySelector(".block.tool .t-summary");
+    expect(summary?.textContent?.length).toBe(31); // 30 chars + ellipsis
+    expect(summary?.textContent?.endsWith("…")).toBe(true);
+  });
+
+  it("non-bash tools do not get a summary (target is bash-only)", () => {
+    const engine = makeEngine();
+    const msg: Msg = {
+      id: "m1",
+      role: "assistant",
+      children: [
+        {
+          id: "c1",
+          kind: "tool",
+          name: "read_doc",
+          args: JSON.stringify({ path: "/tmp/x.pdf" }),
+          state: "done",
+          latencyMs: 100,
+          result: { call_id: "c1", status: "ok", stdout: "hello", stderr: "", exit_code: 0, truncated: false, budget_id: null },
+        },
+      ],
+    };
+    const { container } = render(
+      <Conversation sessionKey="s1" msgs={[msg]} engine={engine} onSend={() => {}} onInspectRun={() => {}} />
+    );
+    // read_doc 是 tool 但 name !== "bash" → 不渲染 t-summary
+    expect(container.querySelector(".block.tool .t-summary")).toBeFalsy();
+  });
+});

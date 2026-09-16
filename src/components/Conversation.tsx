@@ -89,6 +89,28 @@ const ReasonBlock = memo(function ReasonBlock({
 
 // ---- 工具块：running 时本地计时，done 时自动折叠展示结果 ----
 
+// bash tool 专用：从前端取 args.target（LLM 写的「在干啥」一句中文），
+// fallback 到 cmd 前 30 字符。详见 spec/requirements/bash-target.md。
+function bashSummary(args: string | undefined): string | null {
+  if (!args) return null;
+  let obj: { target?: unknown; cmd?: unknown } | null = null;
+  try {
+    obj = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  // 防御：target / cmd 不是 string 时（schema 异常），不渲染
+  const t = typeof obj?.target === "string" ? obj.target.trim() : "";
+  const MAX = 30;
+  if (t) {
+    return t.length > MAX ? t.slice(0, MAX) + "…" : t;
+  }
+  // fallback：cmd 截前 30 字符
+  const c = typeof obj?.cmd === "string" ? obj.cmd.replace(/\s+/g, " ").trim() : "";
+  if (!c) return null;
+  return c.length > MAX ? c.slice(0, MAX) + "…" : c;
+}
+
 function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
   const [elapsed, setElapsed] = useState(0);
   const running = child.state === "running";
@@ -118,13 +140,14 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
     ? "ok"
     : r?.status ?? "done";
 
+  // bash 才有 summary（其它 tool 当前不展示）
+  const summary = child.name === "bash" ? bashSummary(child.args) : null;
+
   return (
     <div className={"block tool " + (running ? "running" : "done") + (open ? " open" : "") + (pending ? " pending" : "")}>
       <div className="block-head" onClick={() => setOpen((v) => !v)}>
         <span className="label"><span className="t-dot" />{child.name}</span>
-        {/* #polish: 删除 t-args 显示 —— args 在 mono 截断显示里看不出有用信息（fork_task
-            description 长文本 / bash 命令截断后无意义）。child.args 字段保留，折叠展开 body 仍可见
-            （与 fork_task 等 task tool 一致）；header 只剩 name + badge + latency。 */}
+        {summary && <span className="t-summary" title={summary}>{summary}</span>}
         <span className="spacer" />
         <span className={"t-badge " + badge}>{badge}</span>
         <span className="t-latency">

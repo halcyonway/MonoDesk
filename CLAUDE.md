@@ -20,6 +20,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
      - API key / token / password / `.env` / `*.pem` / `id_rsa` / 私钥 / OSS / 数据库连接串
      - 真实用户数据、截图里的 PII、内部 URL
      - `node_modules`、构建产物、`dist/`、`*.log`、`.DS_Store`
+   - **commit message / PR title / PR body 严禁出现用户原话**（口语、情绪表达、
+     「无语了 / 我求求你 / 这什么操作」等）。git history 是公开契约，写之前必须
+     改写成中性技术描述（背景 → 改动 → 验证 → Spec 链接）。
    - 提交前跑 `git status` 看 Untracked / Modified 列表；
      跑 `git diff --stat HEAD` 看本次改动总览；任何可疑文件都不要 `git add .`，逐个 `git add <file>`。
    - commit message 用 conventional commits 风格（`feat(...):` / `fix(...):` / `chore(...):`），

@@ -106,7 +106,24 @@ export function TaskDetailPage({
   const title = s?.description || shortId(taskId);
   const parentShort = shortId(s?.parent_session_key || "—");
   const timeoutMin = s && s.timeout_sec > 0 ? Math.round(s.timeout_sec / 60) : 0;
-  const metaEntries = s?.meta ? Object.entries(s.meta) : [];
+  // Meta 区块：fallback 字段（页头没显示的） + LLM 填的 meta（覆盖 fallback）。
+  // LLM 不填 meta 时只显示 fallback，避免「有的 task 有 Meta 有的没」UI 不一致。
+  const fallbackMeta: Record<string, unknown> = {};
+  if (s) {
+    fallbackMeta["created_at"] = new Date(s.created_at * 1000).toISOString();
+    if (s.started_at && s.started_at !== s.created_at) {
+      fallbackMeta["started_at"] = new Date(s.started_at * 1000).toISOString();
+    }
+    if (s.finished_at) {
+      fallbackMeta["finished_at"] = new Date(s.finished_at * 1000).toISOString();
+      const dur = s.finished_at - (s.started_at ?? s.created_at);
+      if (dur > 0) fallbackMeta["duration_sec"] = Number(dur.toFixed(1));
+    }
+    if (s.error) fallbackMeta["error"] = s.error;
+    if (s.final_text) fallbackMeta["final_text"] = s.final_text;
+  }
+  const llmMeta: Record<string, unknown> = (s?.meta && Object.keys(s.meta).length > 0) ? s.meta : {};
+  const metaEntries = Object.entries({ ...fallbackMeta, ...llmMeta });
 
   return (
     <div id="task-detail" className="container">

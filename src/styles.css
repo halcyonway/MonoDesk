@@ -1557,7 +1557,12 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
   max-width: 760px;
   margin: 0 auto;
   padding: 20px 0 24px;
+  /* #body 是 column flex + min-height: 0 —— task-detail 加 flex:1 才能拿到
+     约束高度，把高度传给内嵌 Conversation（Conversation 自己 flex:1 +
+     overflow-y: auto 接管滚动）。之前没设 flex:1，task-detail 只取自身内容
+     高度，Events 段超出后溢出 #body 外，Tauri 窗口滚轮滑不到。 */
   display: flex; flex-direction: column; min-height: 0;
+  flex: 1;
 }
 
 /* back 按钮 —— 圆形 icon-only，独立一行 */

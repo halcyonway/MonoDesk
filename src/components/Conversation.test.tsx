@@ -1,7 +1,8 @@
 // Conversation 单测：自动锚定到底部行为。
 //
-// 用户原话：「重启后打开会话，请你默认滚到最下面。」
-// 这条覆盖两个场景：
+// 会话视图挂载时如果已经有 msgs → 自动 scrollTop = scrollHeight - clientHeight
+// （再加 140px 留白给 composer），流式响应 msgs 变化 → 同步锚到底。
+// 覆盖两个场景：
 //   1) 初次 mount 时已经有历史 msgs → 自动 scrollTop = scrollHeight - clientHeight
 //      （再加 140px 留白给 composer）
 //   2) 流式响应 msgs 变化 → 同步锚到底（不跑就收不到 streaming token）

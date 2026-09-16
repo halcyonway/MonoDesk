@@ -1,8 +1,7 @@
 // StreamEngine 单测：metric / final 携带的 trace_id 必须写到最近一条 assistant Msg。
 //
-// 关键路径（用户原话）：trace_id 进来到 wait_io 是一次 run；点击 assistant
-// 回复可以看到那一次 run 的 tree。所以 final 事件里携带的 trace_id 必须写到
-// 该 turn 对应的 assistant Msg.runId，按钮才能 fetch 到。
+// 关键路径：trace_id 进来到 wait_io 是一次 run；点击 assistant 回复可以看到那一次 run 的 tree。
+// 所以 final 事件里携带的 trace_id 必须写到该 turn 对应的 assistant Msg.runId，按钮才能 fetch 到。
 //
 // #73: 引擎按 event.data.session_key 路由到 per-session callbacks。每个测试
 // session 维护独立 state，所以跨 session 串扰可以直接断言。

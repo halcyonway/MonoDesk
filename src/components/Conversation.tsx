@@ -89,6 +89,85 @@ const ReasonBlock = memo(function ReasonBlock({
 
 // ---- 工具块：running 时本地计时，done 时自动折叠展示结果 ----
 
+// doc-thumb 视觉跟 composer 预览保持一致：72×72 方形 box，居中放 mime 专门
+// icon + 大写 mime label（PDF / CSV / JSON / TXT / MD）。不用 emoji —— emoji
+// 在 macOS / Tauri WebView / 不同字体下渲染不一致（用户截图里 📄 显示成
+// broken 方块）；不用文件名 —— server 命名是 uuid hex（`6ee51565534346c1a675f8d3683075ce.pdf`）
+// 一长串是 noise，不如直接告诉用户这是 PDF。
+//
+// icon 是 inline SVG：通用 document 轮廓 + 不同 mime 的细节（PDF：折叠角 +
+// 红色条；CSV/JSON/TXT/MD：横线代表内容行）。颜色走 var(--text-faint) /
+// var(--accent) 让 light/dark theme 自动跟随。
+
+function docLabelFor(mime: string): string {
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "application/json") return "JSON";
+  if (mime === "text/csv") return "CSV";
+  if (mime === "text/markdown") return "MD";
+  if (mime === "text/plain") return "TXT";
+  // 兜底：取 mime 子类型首段大写
+  const sub = mime.split("/")[1] || "FILE";
+  return sub.toUpperCase().slice(0, 4);
+}
+
+function docIconFor(mime: string) {
+  const common = {
+    viewBox: "0 0 48 48",
+    width: 36,
+    height: 36,
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: "doc-thumb-svg",
+  };
+  if (mime === "application/pdf") {
+    // document + folded corner + 红色 PDF 横幅
+    return (
+      <svg {...common}>
+        <path d="M14 6h14l8 8v28a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+        <path d="M28 6v8h8" />
+        <rect x="14" y="26" width="20" height="14" rx="1.5" fill="var(--accent-soft)" stroke="var(--accent)" />
+        <text x="24" y="36" textAnchor="middle" fontSize="8" fontWeight="700" fill="var(--accent)" stroke="none">
+          PDF
+        </text>
+      </svg>
+    );
+  }
+  // 其它：document + 折角 + 横线代表文本内容
+  return (
+    <svg {...common}>
+      <path d="M14 6h14l8 8v28a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+      <path d="M28 6v8h8" />
+      <line x1="17" y1="22" x2="33" y2="22" />
+      <line x1="17" y1="28" x2="33" y2="28" />
+      <line x1="17" y1="34" x2="27" y2="34" />
+    </svg>
+  );
+}
+
+// bash tool 专用：args 是 JSON 字符串，从中提取 LLM 填的 `target` 字段。
+// 优先级：target（设计意图）> cmd（fallback，截断后的 bash 命令）。
+// 长度上限 30 字符（约 10 个汉字 / 30 个 ASCII），超出加 …。
+// 返回 null → UI 不渲染。
+function bashSummary(args: string | undefined): string | null {
+  if (!args) return null;
+  let obj: { target?: unknown; cmd?: unknown } | null = null;
+  try {
+    obj = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  const t = typeof obj?.target === "string" ? obj.target.trim() : "";
+  const MAX = 30;
+  if (t) return t.length > MAX ? t.slice(0, MAX) + "…" : t;
+  // fallback：target 没填就用 cmd，空白合并
+  const c = typeof obj?.cmd === "string" ? obj.cmd.replace(/\s+/g, " ").trim() : "";
+  if (!c) return null;
+  return c.length > MAX ? c.slice(0, MAX) + "…" : c;
+}
+
 function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
   const [elapsed, setElapsed] = useState(0);
   const running = child.state === "running";
@@ -122,6 +201,13 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
     <div className={"block tool " + (running ? "running" : "done") + (open ? " open" : "") + (pending ? " pending" : "")}>
       <div className="block-head" onClick={() => setOpen((v) => !v)}>
         <span className="label"><span className="t-dot" />{child.name}</span>
+        {/* bash tool 专属：在 label 旁展示 LLM 填的 target（人类可读的一句话总结），
+            超过 30 字符前端截断（+ …），让长 tool 序列里一眼看到「这条 bash 在干啥」。
+            其它 tool 不渲染。child.args 全量保留在折叠 body 里，head 只显示 target。 */}
+        {child.name === "bash" && (() => {
+          const summary = bashSummary(child.args);
+          return summary ? <span className="t-summary" title={summary}>{summary}</span> : null;
+        })()}
         {/* #polish: 删除 t-args 显示 —— args 在 mono 截断显示里看不出有用信息（fork_task
             description 长文本 / bash 命令截断后无意义）。child.args 字段保留，折叠展开 body 仍可见
             （与 fork_task 等 task tool 一致）；header 只剩 name + badge + latency。 */}
@@ -222,14 +308,35 @@ function MsgView({
           {displayText && <p>{displayText}</p>}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="msg-attachments">
-              {msg.attachments.map((a) => (
-                <div key={a.url} className="msg-attachment-thumb">
-                  {/* a.url 现在是绝对 HTTP URL（http://127.0.0.1:8768/debug/attachments/xxx）
-                      浏览器/Tauri/<img> 三方都能直接加载；不需要 file:// 前缀（跨 origin 被拦）。 */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={a.url} alt={a.name} title={a.name} />
+              {msg.attachments.map((a) => {
+                // Tauri desktop 用 convertFileSrc 把本地路径转成 asset:// URL，
+                // 浏览器可以 <img src> 渲染；非 Tauri（dev browser）直接用 file:// 兜底。
+                const src = (window as any).__TAURI__?.core?.convertFileSrc
+                  ? (window as any).__TAURI__.core.convertFileSrc(a.path)
+                  : `file://${a.path}`;
+                return (
+                <div key={a.path} className="msg-attachment-thumb">
+                  {a.mime.startsWith("image/") ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={src} alt={a.name} title={a.name} />
+                  ) : (
+                    <a
+                      className="doc-thumb"
+                      href={src}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`${a.name} (${a.mime})`}
+                    >
+                      {docIconFor(a.mime)}
+                      <div className="doc-thumb-meta">
+                        <span className="doc-thumb-name">{a.name}</span>
+                        <span className="doc-thumb-label">{docLabelFor(a.mime)}</span>
+                      </div>
+                    </a>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

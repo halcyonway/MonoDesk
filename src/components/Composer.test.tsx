@@ -1,6 +1,6 @@
 // Composer 单测：键盘快捷键行为。
 //
-// #71 用户原话：Composer 应该支持
+// Composer 应该支持：
 //   Enter         → send
 //   Shift+Enter   → newline
 //   Cmd+Enter     → send（macOS 直觉）

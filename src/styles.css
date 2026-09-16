@@ -383,6 +383,18 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
 }
 .block-head .meta { color: var(--text-faint); font-size: 11px; }
 .block-head .spacer { flex: 1; }
+/* bash tool 专用：在 label 后展示 LLM 填的 target，dim 色 + 截断，省得长 tool 序列里
+   看不到「这条在干啥」。max-width 限制 + ellipsis；hover title 看全文。 */
+.block-head .t-summary {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+  max-width: 360px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: none;
+}
 .block-head .chev {
   color: var(--text-faint); transition: transform 0.12s;
   flex: none;
@@ -651,15 +663,62 @@ html[data-theme="dark"] #composer {
   margin-top: 8px;
 }
 .msg-attachment-thumb {
-  width: 72px; height: 72px;
-  border-radius: 8px; overflow: hidden;
+  border-radius: 8px;
   border: 1px solid var(--border);
   cursor: pointer;
+  background: var(--bg-panel);
+  transition: background 0.12s, border-color 0.12s;
 }
-.msg-attachment-thumb img {
-  width: 100%; height: 100%; object-fit: cover; display: block;
+.msg-attachment-thumb:hover { opacity: 0.92; }
+/* image attachment：72x72 方形 cover-fill，跟 composer 预览一致 */
+.msg-attachment-thumb > img {
+  display: block;
+  width: 72px; height: 72px;
+  object-fit: cover;
+  border-radius: 7px;
 }
-.msg-attachment-thumb:hover { opacity: 0.85; }
+/* doc attachment (PDF / txt / md / csv / json)：横向布局，左 icon +
+   右文件名 + mime label；不渲染缩略图（PDF 浏览器原生第一页渲染不可靠），
+   文件名 + mime label 是足够信息；点 → 新 tab 浏览器/system viewer 打开。 */
+.msg-attachment-thumb > .doc-thumb {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px;
+  min-width: 180px; max-width: 280px;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+.msg-attachment-thumb > .doc-thumb:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+.msg-attachment-thumb > .doc-thumb .doc-thumb-svg {
+  flex: none;
+}
+.msg-attachment-thumb > .doc-thumb .doc-thumb-meta {
+  display: flex; flex-direction: column;
+  gap: 2px;
+  min-width: 0;  /* 允许 ellipsis 截断 */
+}
+.msg-attachment-thumb > .doc-thumb .doc-thumb-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.msg-attachment-thumb > .doc-thumb .doc-thumb-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  line-height: 1;
+}
 
 /* ---------- attachment preview strip (composer) ---------- */
 .attachment-preview {

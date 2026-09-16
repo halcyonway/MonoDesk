@@ -3,8 +3,35 @@ import type { StatusState, Attachment } from "../ws/protocol";
 import { fmtMs } from "../stream/markdown";
 
 const UPLOAD_URL =
-  (import.meta.env.VITE_DEBUG_URL ?? "http://127.0.0.1:8768") +
+  (import.meta.env.VITE_MONOX_UPLOAD_URL ?? "http://127.0.0.1:8768") +
   "/debug/attachments/upload";
+
+// MonoDesk 上传白名单 —— 必须跟 MonoX read_doc tool 支持的格式 1:1 同步。
+// 详见 spec/requirements/doc-tool-universal.md §2.8。
+// v1: image（multimodalunderstand 走）+ pdf/txt/md/csv/json（read_doc 走）。
+// 改这里时同步改 MonoX/core/loop/tools/read_doc.py 的 _HANDLERS 表。
+const ALLOWED_UPLOAD_MIME = new Set<string>([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+
+// accept 字符串：根据上面的白名单拼出来。
+// 顺序不影响 browser 过滤，但 readability 更好按 image 先 / doc 后。
+const ACCEPT_ATTR = [
+  "image/png,image/jpeg,image/gif,image/webp",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+].join(",");
 
 // Local-only preview item: blob URL stays in memory, never uploaded until send
 interface LocalPreview {
@@ -80,15 +107,27 @@ export function Composer({
     ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
   };
 
-  // Add files: create blob object URLs for preview; don't upload yet.
+  // Add files: 按白名单过滤 + create blob object URLs for preview; don't upload yet.
+  // 不在白名单的 file → console.warn 后 silently drop（不弹 modal，避免 paste 干扰输入）。
+  // 为什么不直接拦 <input accept>：浏览器在某些 file manager 里仍能塞其它类型过来
+  // （比如 macOS Finder 拖入 / 剪贴板），所以 defense-in-depth 在 JS 层也卡一次。
   const addFiles = useCallback((files: FileList | File[]) => {
-    const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (!imageFiles.length) return;
-    const newPreviews: LocalPreview[] = imageFiles.map((file) => ({
+    const allowed: File[] = [];
+    for (const f of Array.from(files)) {
+      if (ALLOWED_UPLOAD_MIME.has(f.type)) {
+        allowed.push(f);
+      } else {
+        // 不告诉用户——paste 场景下他们可能根本不知道剪贴板里有什么；
+        // 留个 console.warn 方便调试。
+        console.warn(`attachment dropped: unsupported mime "${f.type || "(empty)"}" for ${f.name}`);
+      }
+    }
+    if (!allowed.length) return;
+    const newPreviews: LocalPreview[] = allowed.map((file) => ({
       id: Math.random().toString(36).slice(2),
       objectUrl: URL.createObjectURL(file),
       name: file.name,
-      mime: file.type || "image/png",
+      mime: file.type || "application/octet-stream",
       file,
     }));
     setPreviews((prev) => [...prev, ...newPreviews]);
@@ -100,7 +139,10 @@ export function Composer({
       const resp = await fetch(UPLOAD_URL, {
         method: "POST",
         body: file,
-        headers: { "Content-Type": file.type || "image/png" },
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name),
+        },
       });
       if (!resp.ok) {
         // 别再静默吞：server 返回 4xx/5xx 时至少打到 console，让用户/调试者看见。
@@ -108,8 +150,8 @@ export function Composer({
         console.error("attachment upload failed", resp.status, text);
         return null;
       }
-      const json = (await resp.json()) as { url: string; name: string; mime: string };
-      return { url: json.url, name: json.name, mime: json.mime };
+      const json = (await resp.json()) as { path: string; name: string; mime: string };
+      return { path: json.path, name: json.name, mime: json.mime };
     } catch (err) {
       // 网络层错误（CORS preflight 失败 / connection refused / abort）也打日志。
       // 之前这里 return null 让用户根本看不到上传失败，现在调试能看见。
@@ -132,15 +174,22 @@ export function Composer({
     if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   };
 
-  // Paste from clipboard
+  // Paste from clipboard —— 只拦「文件类」item（kind === 'file'，来自 Finder 复制 /
+  // 浏览器复制图片等）；纯文本（kind === 'string'，text/plain / text/html / text/uri-list）
+  // 一律放行，让 textarea 走默认 paste 行为。
+  //
+  // 之前 bug：把 text/plain 也当 .txt 文件收下来（getAsFile() 对 string-kind item
+  // 也会返回 File 包文本），导致用户 paste 文字时变成「附件预览」而不是输入到 textarea。
   const onPaste = useCallback(
     (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
-      const imageItems = Array.from(items).filter((item) => item.type.startsWith("image/"));
-      if (!imageItems.length) return;
+      const fileItems = Array.from(items).filter(
+        (item) => item.kind === "file" && ALLOWED_UPLOAD_MIME.has(item.type)
+      );
+      if (!fileItems.length) return;
       e.preventDefault();
-      const files = imageItems
+      const files = fileItems
         .map((item) => item.getAsFile())
         .filter(Boolean) as File[];
       addFiles(files);
@@ -286,8 +335,10 @@ export function Composer({
             <button
               className="attach-btn"
               onClick={() => fileInputRef.current?.click()}
-              title="Attach image"
+              title="Attach file (image, PDF, txt, md, csv, json)"
             >
+              {/* paperclip — 通用「附件」语义，覆盖 image + doc 全 9 种支持格式。
+                  之前的 image icon（frame + circle + mountain）跟 PDF/csv 含义对不上。 */}
               <svg
                 viewBox="0 0 24 24"
                 width="16"
@@ -295,16 +346,16 @@ export function Composer({
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                <rect x="3" y="3" width="18" height="18" rx="3" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept={ACCEPT_ATTR}
               multiple
               style={{ display: "none" }}
               onChange={(e) => {

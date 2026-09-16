@@ -156,6 +156,10 @@ export function renderMarkdown(src: string): string {
         continue;
       }
       out += "<p>" + inline(line) + "</p>";
+    } else if (/^([-*_])\1{2,}\s*$/.test(t)) {
+      // horizontal rule：3+ 个相同字符（--- / *** / ___）整行。
+      // 单独一行；行内不能有别的字符。CommonMark GFM。
+      out += "<hr/>";
     } else if (/^#{1,3}\s/.test(t)) {
       const m = t.match(/^(#{1,3})\s+(.*)/)!;
       out += "<h" + m[1].length + ">" + inline(m[2]) + "</h" + m[1].length + ">";

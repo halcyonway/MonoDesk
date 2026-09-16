@@ -517,9 +517,11 @@ export class StreamEngine {
   private onToolStart(cb: EngineCallbacks, sk: string, name: string, args: Record<string, unknown>, callId?: string) {
     this.freezeText(cb, sk);
     this.freezeReasoning(cb, sk);
-    const argsStr = Object.entries(args || {})
-      .map(([k, v]) => k + "=" + JSON.stringify(v))
-      .join(" ");
+    // 把 args dict 序列化为合法 JSON 字符串存到 child.args。
+    // 之前用 "k=v k=v" 形式（key=value pairs），bashSummary() 那边 JSON.parse 失败 → target
+    // 永远渲染不出来。改成 JSON.stringify(args) 后 bashSummary 能正确 JSON.parse 解出 target。
+    // child.kind === "tool" 的消费者（Conversation.tsx 的 ToolBlock / TaskBlock）都按 JSON 解析。
+    const argsStr = JSON.stringify(args || {});
     const s = this.streamFor(sk);
 
     // 有 call_id + 之前有 ToolPending 创过块 → 找到它，只更新 args/name。

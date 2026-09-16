@@ -82,25 +82,35 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 | mime 分支 | 元素 | 说明 |
 |---|---|---|
 | `image/*` | `<img src={a.url} alt={a.name} title={a.name} />` | 72×72 方形 cover-fill |
-| 其它（含 `application/pdf` / text/* / json） | `<a class="doc-thumb" href={a.url} target="_blank"><svg/>{MIME_LABEL}</a>` | 72×72 方形 box，inline SVG icon（PDF 带红色横幅 + "PDF" 字样；其它 mime document + 横线代表文本行）+ 大写 mime label（`PDF` / `CSV` / `JSON` / `TXT` / `MD`）；点 → 新 tab 浏览器/system viewer 打开原文件 |
+| `application/pdf` | `<a class="msg-attachment-link" href={a.url} target="_blank"><img src={a.url}/></a>` | 72×72 方形 cover-fill，浏览器对 `<img src=...pdf>` 自动渲染第一页；外层 `<a>` 让点击 → 新 tab 打开完整 PDF（Safari / Preview） |
+| 其它（`text/markdown` / `text/csv` / `application/json` / `text/plain` / 未知） | `<a class="doc-thumb" href={a.url} target="_blank"><svg/>{MIME_LABEL}</a>` | 72×72 方形 box，inline SVG icon + 大写 mime label（`PDF` / `CSV` / `JSON` / `TXT` / `MD`）；文本类 mime 浏览器 `<img>` 渲染不出东西，用 SVG 兜底 |
 
-**视觉一致性**：doc-thumb 跟 image-thumb 是**同一个 72×72 方形 box**，hover 背景变
-`--bg-hover`。这样上传 PDF 跟上传 PNG 在 user message bubble 里视觉一致：
-都是「一个 thumb」。icon + label 让用户立刻知道 mime 类型（不用点击展开）。
+**视觉一致性**：image 和 PDF 都走 `<img>` 72×72 cover-fill，跟 composer 预览（Image #25）
+同 box size 视觉一致。doc-thumb（文本类兜底）也是 72×72 但内部是 SVG + label，
+用户能立刻看出 mime 类型。
 
-**为什么不用 emoji + 文件名**（v1 风格）：
-- emoji 在 macOS / Tauri WebView / 不同字体下渲染不一致（用户截图里 📄 显示成
-  broken 方块，PDF thumbnail 看着像 broken image）。
-- 文件名 = server 端 `uuid.<ext>`（如 `6ee51565534346c1a675f8d3683075ce.pdf`），
-  一长串 hex 是 noise；用户不关心 server 文件名，只关心 mime 类型。
-- 横向 emoji + 文件名布局让 doc-thumb 卡片宽度自适应（最长 240px），跟 image
-  的 72×72 方形不一致，多种附件并存时 bubble 行高参差。
+**bubble 不渲染 `×` 关闭按钮**（用户原话「发出去就不需要关闭按钮了」）：
+- composer 预览是上传中态，需要 remove 按钮
+- bubble 是历史消息视图，附件已发不可改；保留 `×` 反而误导用户
+- 跟 assistant message children 的其它 72×72 box（tool block、reasoning block）一致视觉节奏
 
-**为什么用 inline SVG**：
-- 不引入图标库（保持 emoji + 内联 SVG 的当前形态）。
-- SVG 颜色走 `currentColor` / `var(--accent)`，light/dark theme 自动跟随。
-- PDF 单独走「document + 折叠角 + 红色横幅 + "PDF" 字样」视觉；其它 mime
-  走「document + 折叠角 + 横线代表内容行」，横线数量暗示是文本类。
+**PDF 为什么走 `<img>` 而不是 `<object>`**：`<object data=... type="application/pdf">` 在
+72×72 小尺寸容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom toolbar，
+丑且不实用。`<img>` 走浏览器原生 PDF 缩略图渲染（Safari / Chrome / macOS WebView /
+Tauri WebView 全部支持），视觉跟 composer blob URL 一致。
+
+**PDF 渲染依赖 server 返回 `application/pdf` mime**：`MonoX/core/debug_server.py`
+的 `ext_map` 之前漏了 `.pdf / .md / .csv / .json / .txt`，导致 server 返回
+`application/octet-stream`，`<img src=...pdf>` 拿不到正确 mime 渲染失败 → 显示 broken image。
+修了 server ext_map 后 PDF bubble 跟 composer 视觉一致（PDF 第一页缩略图）。
+
+**为什么 PDF 还要包 `<a>`**：thumbnail 视觉预览 ≠ 阅读器。点击 thumbnail →
+新 tab 打开原 PDF（Safari / Preview / Chrome 全屏 viewer），用户有完整阅读体验。
+
+**为什么文本类 mime（md/csv/json/txt）不用 `<img>` 走 cover-fill**：
+浏览器对 `text/*` / `application/json` 的 `<img>` 渲染结果是空白或 broken image
+（不是图像格式）；保留 SVG icon + 大写 mime label 兜底，用户一眼能看出是文本类
+（`MD` / `CSV` / `JSON` / `TXT`）而不是 PDF。
 
 **`docLabelFor(mime)` 规则**：
 
@@ -115,11 +125,6 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 
 **`title` 属性保留全名**：`title={\`${a.name} (${a.mime})\`}` —— hover tooltip
 还能看到完整文件名 + mime 串，作为兜底信息（屏幕阅读器友好）。
-
-**不再用 `<object>`**：之前 PDF 单独走 `<object>` 调浏览器原生 PDF viewer，但
-小尺寸（72×72）容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom
-toolbar，丑且不实用。bubble 是「缩略图 + 打开」入口，不是阅读器；完整 PDF
-体验让用户点链接到 browser/system viewer 看。
 
 **为什么不用 `<iframe>` 替代 `<object>`**：iframe sandbox 更严但 Safari / Tauri WebView
 对 PDF iframe 支持参差，object 是最稳的 cross-engine 选择。

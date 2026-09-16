@@ -310,17 +310,31 @@ function MsgView({
             <div className="msg-attachments">
               {msg.attachments.map((a) => (
                 <div key={a.url} className="msg-attachment-thumb">
-                  {/* 按 mime 分流渲染（#16 polish）：
-                      - image/* → <img> 正常内嵌
-                      - 其它（含 PDF / txt / csv / json）→ doc-thumb 卡片
-                        （📄 + 文件名 + mime），点击 → 新 tab 打开原文件
-                      之前 PDF 单独走 <object> 浏览器原生 viewer，但小尺寸（56×56）
-                      容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom
-                      toolbar，丑且不实用。bubble 是「文件名 + 打开」入口，不是
-                      阅读器。完整 PDF 体验让用户点链接到 browser/system viewer 看。 */}
+                  {/* 三路由按 mime 分流：
+                      - image/* → <img> 72×72 方形 cover-fill
+                      - application/pdf → <a><img></a> —— 跟 composer 预览保持一致
+                        视觉（浏览器对 <img src=...pdf> 自动渲染第一页，靠 server
+                        ext_map 返回 application/pdf mime 才能正确渲染）。
+                        <a> 包 <img> 让点击 → 新 tab 打开完整 PDF（Safari / Preview），
+                        bubble 是 thumbnail 不是 reader。
+                      - 其它（txt / md / csv / json）→ doc-thumb 卡片（SVG icon + 大写
+                        mime label）。文本类 mime 浏览器无法用 <img> 渲染，保留 SVG 兜底。
+                      **不渲染 × 关闭按钮**（用户原话「发出去就不需要关闭按钮」—— bubble
+                      是历史消息视图，附件不可改）。 */}
                   {a.mime.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.url} alt={a.name} title={a.name} />
+                  ) : a.mime === "application/pdf" ? (
+                    <a
+                      className="msg-attachment-link"
+                      href={a.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`${a.name} (open PDF in new tab)`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={a.url} alt={a.name} title={a.name} />
+                    </a>
                   ) : (
                     <a
                       className="doc-thumb"

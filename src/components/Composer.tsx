@@ -281,12 +281,30 @@ export function Composer({
             <div className="attachment-preview">
               {previews.map((p) => (
                 <div key={p.id} className="attachment-thumb">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={p.objectUrl}
-                    alt={p.name}
-                    onClick={() => setLightboxUrl(p.objectUrl)}
-                  />
+                  {/* 按 mime 分流，跟 Conversation 里的 msg-attachments 保持一致：
+                      - image/* → <img> + 点开 lightbox
+                      - application/pdf → <object> 调原生 PDF viewer（无 lightbox，点不开）
+                      - 其它 → doc thumb（icon + 文件名），点不开 lightbox */}
+                  {p.mime.startsWith("image/") ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.objectUrl}
+                      alt={p.name}
+                      onClick={() => setLightboxUrl(p.objectUrl)}
+                    />
+                  ) : p.mime === "application/pdf" ? (
+                    <object
+                      data={p.objectUrl}
+                      type="application/pdf"
+                      aria-label={p.name}
+                      title={p.name}
+                    />
+                  ) : (
+                    <div className="doc-thumb" title={`${p.name} (${p.mime})`}>
+                      <span className="doc-thumb-icon" aria-hidden>📄</span>
+                      <span className="doc-thumb-name">{p.name}</span>
+                    </div>
+                  )}
                   <button
                     className="attachment-remove"
                     onClick={() => removePreview(p.id)}

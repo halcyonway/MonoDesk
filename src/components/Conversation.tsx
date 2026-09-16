@@ -224,10 +224,31 @@ function MsgView({
             <div className="msg-attachments">
               {msg.attachments.map((a) => (
                 <div key={a.url} className="msg-attachment-thumb">
-                  {/* a.url 现在是绝对 HTTP URL（http://127.0.0.1:8768/debug/attachments/xxx）
-                      浏览器/Tauri/<img> 三方都能直接加载；不需要 file:// 前缀（跨 origin 被拦）。 */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={a.url} alt={a.name} title={a.name} />
+                  {/* 按 mime 分流渲染：
+                      - image/* → <img> 正常内嵌
+                      - application/pdf → <object> 调浏览器原生 PDF viewer
+                        （Chromium / Safari / Tauri WebView 都自带）
+                      - 其它（text/* / json）→ 走 doc-tool-universal spec §6 「v2 美化」；
+                        v1 只显示文件名 + mime，缩略图位置放个 icon 让 layout 不变 */}
+                  {a.mime.startsWith("image/") ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={a.url} alt={a.name} title={a.name} />
+                  ) : a.mime === "application/pdf" ? (
+                    <object
+                      data={a.url}
+                      type="application/pdf"
+                      aria-label={a.name}
+                      title={a.name}
+                    >
+                      {/* object 浏览器不支持时（罕见）的 fallback：点链接打开 */}
+                      <a href={a.url} target="_blank" rel="noreferrer">{a.name}</a>
+                    </object>
+                  ) : (
+                    <div className="doc-thumb" title={`${a.name} (${a.mime})`}>
+                      <span className="doc-thumb-icon" aria-hidden>📄</span>
+                      <span className="doc-thumb-name">{a.name}</span>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

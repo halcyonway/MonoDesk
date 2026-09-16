@@ -307,3 +307,88 @@ describe("Conversation inline agent metrics (#70)", () => {
     expect(onInspectRun).toHaveBeenCalledWith("t_xyz");
   });
 });
+
+describe("Conversation attachment rendering by mime (doc-tool-universal)", () => {
+  // 之前 bug：所有 attachment 一律用 <img>，PDF 不是图片 → broken image icon。
+  // 修法：按 mime 分流 — image/* → <img>，application/pdf → <object>，
+  //       其它（text/* / json）→ doc thumb（icon + 文件名）。
+  it("image attachment renders as <img>", () => {
+    const engine = makeEngine();
+    const msg: Msg = {
+      id: "m1",
+      role: "user",
+      text: "see this",
+      attachments: [
+        { url: "http://x/y.png", name: "y.png", mime: "image/png" },
+      ],
+    };
+    const { container } = render(
+      <Conversation sessionKey="s1" msgs={[msg]} engine={engine} onSend={() => {}} onInspectRun={() => {}} />
+    );
+    const img = container.querySelector(".msg-attachment-thumb img") as HTMLImageElement;
+    expect(img).toBeTruthy();
+    expect(img.getAttribute("src")).toBe("http://x/y.png");
+  });
+
+  it("PDF attachment renders as <object type=application/pdf> (NOT <img>)", () => {
+    const engine = makeEngine();
+    const msg: Msg = {
+      id: "m1",
+      role: "user",
+      text: "read this",
+      attachments: [
+        { url: "http://x/doc.pdf", name: "doc.pdf", mime: "application/pdf" },
+      ],
+    };
+    const { container } = render(
+      <Conversation sessionKey="s1" msgs={[msg]} engine={engine} onSend={() => {}} onInspectRun={() => {}} />
+    );
+    // 不应该有 <img>（之前 bug：PDF 走了 <img> → broken icon）
+    const img = container.querySelector(".msg-attachment-thumb img");
+    expect(img).toBeFalsy();
+    // 应该有 <object type=application/pdf>
+    const obj = container.querySelector('.msg-attachment-thumb object[type="application/pdf"]') as HTMLObjectElement;
+    expect(obj).toBeTruthy();
+    expect(obj.getAttribute("data")).toBe("http://x/doc.pdf");
+  });
+
+  it("text/csv attachment renders as doc-thumb (not <img>, not <object>)", () => {
+    const engine = makeEngine();
+    const msg: Msg = {
+      id: "m1",
+      role: "user",
+      text: "table",
+      attachments: [
+        { url: "http://x/data.csv", name: "data.csv", mime: "text/csv" },
+      ],
+    };
+    const { container } = render(
+      <Conversation sessionKey="s1" msgs={[msg]} engine={engine} onSend={() => {}} onInspectRun={() => {}} />
+    );
+    expect(container.querySelector(".msg-attachment-thumb img")).toBeFalsy();
+    expect(container.querySelector(".msg-attachment-thumb object")).toBeFalsy();
+    const doc = container.querySelector(".doc-thumb");
+    expect(doc).toBeTruthy();
+    expect(doc?.textContent).toContain("data.csv");
+  });
+
+  it("mixed attachments route independently per mime", () => {
+    const engine = makeEngine();
+    const msg: Msg = {
+      id: "m1",
+      role: "user",
+      text: "three files",
+      attachments: [
+        { url: "http://x/a.png", name: "a.png", mime: "image/png" },
+        { url: "http://x/b.pdf", name: "b.pdf", mime: "application/pdf" },
+        { url: "http://x/c.json", name: "c.json", mime: "application/json" },
+      ],
+    };
+    const { container } = render(
+      <Conversation sessionKey="s1" msgs={[msg]} engine={engine} onSend={() => {}} onInspectRun={() => {}} />
+    );
+    expect(container.querySelectorAll(".msg-attachment-thumb img")).toHaveLength(1);
+    expect(container.querySelectorAll('.msg-attachment-thumb object[type="application/pdf"]')).toHaveLength(1);
+    expect(container.querySelectorAll(".doc-thumb")).toHaveLength(1);
+  });
+});

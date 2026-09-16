@@ -120,8 +120,21 @@ export const EMPTY_METRICS: Metrics = {
   completion: null,
 };
 
-let idSeq = 0;
-const nextId = () => "b" + ++idSeq;
+// 每个 sessionKey 一个独立计数器 —— 之前是模块级全局 idSeq，HMR / reload
+// 后 idSeq 重置但 sessionStates / DOM 残留仍在 → 新会话创建 child 时 id 从
+// "b1" 开始，跟旧 msgs 里的 "b1" 冲突 → React duplicate key 警告 + DOM 重影
+// （新会话视图同时残留旧会话 tool block + 新空屏）。
+//
+// per-session idSeqMap 保证：
+// - 不同 session 的 id 永远独立（不会撞 key）
+// - 同 session 内 id 唯一（局部自增 + 全局前缀）
+// - HMR / reload 后新 id 不会跟旧 id 撞（因为 sessionKey 在 id 里）
+const idSeqBySk = new Map<string, number>();
+const nextId = (sk: string) => {
+  const seq = (idSeqBySk.get(sk) ?? 0) + 1;
+  idSeqBySk.set(sk, seq);
+  return `b-${sk}-${seq}`;
+};
 const now = () => performance.now();
 
 // 打字机平滑：Jitter Buffer + 单字淡入
@@ -312,8 +325,8 @@ export class StreamEngine {
     const cb = this.router(sessionKey);
     cb.setMsgs((prev) => [
       ...prev,
-      { id: nextId(), role: "user", text, attachments, forkQuestion: opts?.forkQuestion },
-      { id: nextId(), role: "assistant", children: [], pending: true },
+      { id: nextId(sessionKey), role: "user", text, attachments, forkQuestion: opts?.forkQuestion },
+      { id: nextId(sessionKey), role: "assistant", children: [], pending: true },
     ]);
     this.resetTurn(cb, sessionKey);
     const s = this.streamFor(sessionKey);
@@ -431,7 +444,7 @@ export class StreamEngine {
     cb.setMsgs((prev) => {
       const last = prev[prev.length - 1];
       if (last && last.role === "assistant") return prev;
-      return [...prev, { id: nextId(), role: "assistant", children: [], pending: true }];
+      return [...prev, { id: nextId(sk), role: "assistant", children: [], pending: true }];
     });
     const s = this.streamFor(sk);
     s.turnOpen = true;
@@ -443,7 +456,7 @@ export class StreamEngine {
     // 用稳定的 child id (curReasoningId) 判断，不再用 reasoningEls（它是临时绑定，
     // 会被 React 重渲染清掉）。
     if (s.curReasoningId == null) {
-      const id = nextId();
+      const id = nextId(sk);
       s.curReasoningId = id;
       this.appendChild(cb, sk, { id, kind: "reasoning" });
       s.reasoningStart = now();
@@ -465,7 +478,7 @@ export class StreamEngine {
     if (!s.turnOpen) this.ensureTurn(cb, sk);
     if (!s.assistantEl) {
       this.freezeReasoning(cb, sk);
-      const id = nextId();
+      const id = nextId(sk);
       s.curTextId = id;
       this.appendChild(cb, sk, { id, kind: "text" });
       s.streaming = true;
@@ -547,7 +560,7 @@ export class StreamEngine {
       return;
     }
 
-    const id = nextId();
+    const id = nextId(sk);
     s.curToolId = id;
     this.appendChild(cb, sk, {
       id,
@@ -574,7 +587,7 @@ export class StreamEngine {
     const s = this.streamFor(sk);
     // 同 call_id 不重复创（防御性：server 偶尔重复发）
     if (s.pendingToolByCallId.has(callId)) return;
-    const id = nextId();
+    const id = nextId(sk);
     s.curToolId = id;
     s.pendingToolByCallId.set(callId, id);
     this.appendChild(cb, sk, {
@@ -686,7 +699,7 @@ export class StreamEngine {
   private onCard(cb: EngineCallbacks, sk: string, data: Record<string, any>) {
     this.freezeText(cb, sk);
     this.appendChild(cb, sk, {
-      id: nextId(),
+      id: nextId(sk),
       kind: "note",
       text: "card · " + truncate(JSON.stringify(data), 200),
     });
@@ -695,7 +708,7 @@ export class StreamEngine {
   private onError(cb: EngineCallbacks, sk: string, code: string, msg: string) {
     this.freezeText(cb, sk);
     this.freezeReasoning(cb, sk);
-    this.appendChild(cb, sk, { id: nextId(), kind: "error", text: code + " — " + msg });
+    this.appendChild(cb, sk, { id: nextId(sk), kind: "error", text: code + " — " + msg });
     cb.setStatus("error");
     // error 也是"终态"，loading 必须消失
     cb.setMsgs((prev) => {
@@ -827,9 +840,9 @@ export class StreamEngine {
     const el = stream.assistantEl;
     if (!el) return;
     if (!stream.streaming || stream.tokenBuf.length === 0) {
-      // 流结束（被 freeze 调过）：最后一次渲染（一次性 innerHTML），DOM 收敛到稳定状态
-      // 顺手把残留 caret 移除 —— 之前 appendCaret 让 caret 永远停在 DOM 末尾，
-      // 流结束后还在闪烁（用户截图：assistant 文本流完后 caret 卡在中间位置）。
+      // 流结束（被 freeze 调过）：最后一次渲染（一次性 innerHTML），DOM 收敛到稳定状态。
+      // 不再 appendCaret —— 之前 caret 永远停在 DOM 末尾闪烁（assistant 文本流完后
+      // caret 卡在中间位置不再被移除）。
       this.consolidateFreshSpans(stream);
       el.innerHTML = renderMarkdown(stream.paintedBuf);
       return;
@@ -962,6 +975,15 @@ export class StreamEngine {
     const s = this.streamFor(sk);
     if (s.curReasoningId != null && s.reasoningBuf) {
       this.patchChild(cb, sk, s.curReasoningId, { text: s.reasoningBuf });
+    }
+    // 顺手清掉 reasoning body 里残留的 caret —— 之前 paintReasoning 流式
+    // 渲染时每 tick 都 appendCaret，流结束后 freezeReasoning 不主动移除，
+    // caret 永远停在 body 末尾闪烁（reasoning 块下方、tool block 上方一直
+    // 残留一个闪烁光标）。
+    if (s.reasoningEls) {
+      const body = s.reasoningEls.body;
+      const oldCaret = body.querySelector(".caret");
+      if (oldCaret) oldCaret.remove();
     }
     s.curReasoningId = null;
     s.reasoningEls = null;

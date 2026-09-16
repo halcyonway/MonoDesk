@@ -17,6 +17,7 @@ import { StreamEngine, type Msg } from "../stream/engine";
 import { Conversation } from "./Conversation";
 import { shortId } from "./TasksPage";
 import { tasksStore, useTask, type TaskEventFrame } from "../store/tasks";
+import { renderMarkdown } from "../stream/markdown";
 import type { MonoDeskEvent } from "../ws/protocol";
 import type { MonoDeskWS } from "../ws/client";
 
@@ -134,7 +135,9 @@ export function TaskDetailPage({
       }
     }
     if (s.error) fallbackMeta["error"] = s.error;
-    if (s.final_text) fallbackMeta["final_text"] = s.final_text;
+    // 故意不展示 final_text —— 它是 LLM 最终回复全文（可能几千字符），不属于
+    // metadata。Events 段本就该显示 final_text child block（agent message）。
+    // 塞进 Meta 区块会把页面撑到几千行高，挤掉 Events / 导致不可滚动。
   }
   const llmMeta: Record<string, unknown> = (s?.meta && Object.keys(s.meta).length > 0) ? s.meta : {};
   const metaEntries = Object.entries({ ...fallbackMeta, ...llmMeta });
@@ -200,6 +203,19 @@ export function TaskDetailPage({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Result —— completed / failed / cancelled 时 LLM final_text 用 markdown
+          渲染（不截断、不 JSON 化）。这是 task 的执行结果，必须完整可读。
+          running 时 s.final_text 通常是 null，不渲染。 */}
+      {s?.final_text && (
+        <div className="detail-section">
+          <div className="section-title">Result</div>
+          <div
+            className="detail-result"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(s.final_text) }}
+          />
         </div>
       )}
 

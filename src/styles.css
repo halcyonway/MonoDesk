@@ -1482,7 +1482,13 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 .task-title {
   flex: 1;
   font-size: 14px; font-weight: 600; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* 强制换行：list 卡片 title 需完整可读（task description 是关键诊断信息），
+     不能用 ellipsis 隐藏。卡片高度随标题长度自适应，整个 list 页由
+     #tasks-page 的 overflow-y: auto 接管滚动。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
   min-width: 0;
 }
 
@@ -1557,12 +1563,14 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
   max-width: 760px;
   margin: 0 auto;
   padding: 20px 0 24px;
-  /* #body 是 column flex + min-height: 0 —— task-detail 加 flex:1 才能拿到
-     约束高度，把高度传给内嵌 Conversation（Conversation 自己 flex:1 +
-     overflow-y: auto 接管滚动）。之前没设 flex:1，task-detail 只取自身内容
-     高度，Events 段超出后溢出 #body 外，Tauri 窗口滚轮滑不到。 */
+  /* #body 是 column flex + min-height: 0 —— task-detail 加 flex:1 拿到约束
+     高度，再加 overflow-y: auto 让整个 detail 页自己接管滚动。
+     之前只 flex:1 不加 overflow：Meta 区块很长时（final_text 大段 fallback）
+     detail-events 被压扁 / 不可见；现在 detail-events 改成自然撑开，整个
+     detail 页（back / head / Meta / Events）按内容依次排，外层滚。 */
   display: flex; flex-direction: column; min-height: 0;
   flex: 1;
+  overflow-y: auto;
 }
 
 /* back 按钮 —— 圆形 icon-only，独立一行 */
@@ -1580,6 +1588,11 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
   font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  /* 强制换行：detail 页 task title 需完整展示，不能 ellipsis 截断。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
 }
 .detail-head .task-sub-id {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -1634,14 +1647,35 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 }
 
 .detail-events {
-  /* #task-detail 是 column flex，detail-events 作为「Events」段要撑满剩余高度
-     （back / head / Meta 都是 flex: 0 auto），把高度传给内嵌 Conversation。
-     之前没设 flex:1，detail-events 只取自身内容高度，#conversation-wrap
-     拿不到约束高度 → 滚动条出不来。跟 Skills page 同样的 flex chain 套路。 */
-  flex: 1;
+  /* detail-events 不再自己 flex:1 撑剩余 —— 之前 Meta 区块很长时（final_text
+     大段 fallback）会挤压 detail-events 拿到的高度，导致 Events 段被压扁甚至
+     不可见。改成自然撑开（flex: 0 1 auto），由 #task-detail 自己的 overflow-y
+     接管整体滚动，所有段（back / head / Meta / Events）都参与整体布局。 */
+  flex: 0 1 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
+}
+
+/* Result 区块：LLM final_text markdown 渲染结果，需完整可读，禁用
+   ellipsis 截断。 */
+.detail-result {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+/* Result 区块内图片限宽：原图可能远大于父容器，max-width: 100% 限制
+   不溢出，max-height 兜底避免超长图把页面撑高。仅 scope 到 .detail-result
+   内的 img，不动全局 .stream img 规则。 */
+.detail-result img {
+  max-width: 100%;
+  max-height: 360px;
+  height: auto;
+  border-radius: 4px;
 }
 
 .task-detail-empty {

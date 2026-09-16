@@ -144,3 +144,24 @@ describe("Composer keyboard shortcuts", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 });
+
+describe("Composer attachment whitelist (doc-tool-universal)", () => {
+  // 上传白名单 = MonoX read_doc 工具的支持范围。
+  // 这里断言 <input type="file" accept> 包含 image + pdf/txt/md/csv/json 全部白名单 mime，
+  // 跟 MonoX/core/loop/tools/read_doc.py 的 _HANDLERS 表保持 1:1（spec §2.8）。
+  it("file input accept includes image + doc whitelist", () => {
+    const { container } = renderComposer();
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+    const accept = input.getAttribute("accept") || "";
+    // image 兼容旧行为
+    expect(accept).toContain("image/png");
+    expect(accept).toContain("image/jpeg");
+    // doc 工具支持的所有 mime 都要在
+    expect(accept).toContain("application/pdf");
+    expect(accept).toContain("text/plain");
+    expect(accept).toContain("text/markdown");
+    expect(accept).toContain("text/csv");
+    expect(accept).toContain("application/json");
+  });
+});

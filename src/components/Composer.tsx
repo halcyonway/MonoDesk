@@ -6,6 +6,33 @@ const UPLOAD_URL =
   (import.meta.env.VITE_DEBUG_URL ?? "http://127.0.0.1:8768") +
   "/debug/attachments/upload";
 
+// MonoDesk 上传白名单 —— 必须跟 MonoX read_doc tool 支持的格式 1:1 同步。
+// 详见 spec/requirements/doc-tool-universal.md §2.8。
+// v1: image（multimodalunderstand 走）+ pdf/txt/md/csv/json（read_doc 走）。
+// 改这里时同步改 MonoX/core/loop/tools/read_doc.py 的 _HANDLERS 表。
+const ALLOWED_UPLOAD_MIME = new Set<string>([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+]);
+
+// accept 字符串：根据上面的白名单拼出来。
+// 顺序不影响 browser 过滤，但 readability 更好按 image 先 / doc 后。
+const ACCEPT_ATTR = [
+  "image/png,image/jpeg,image/gif,image/webp",
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+].join(",");
+
 // Local-only preview item: blob URL stays in memory, never uploaded until send
 interface LocalPreview {
   /** client-generated unique id */
@@ -80,15 +107,27 @@ export function Composer({
     ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
   };
 
-  // Add files: create blob object URLs for preview; don't upload yet.
+  // Add files: 按白名单过滤 + create blob object URLs for preview; don't upload yet.
+  // 不在白名单的 file → console.warn 后 silently drop（不弹 modal，避免 paste 干扰输入）。
+  // 为什么不直接拦 <input accept>：浏览器在某些 file manager 里仍能塞其它类型过来
+  // （比如 macOS Finder 拖入 / 剪贴板），所以 defense-in-depth 在 JS 层也卡一次。
   const addFiles = useCallback((files: FileList | File[]) => {
-    const imageFiles = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    if (!imageFiles.length) return;
-    const newPreviews: LocalPreview[] = imageFiles.map((file) => ({
+    const allowed: File[] = [];
+    for (const f of Array.from(files)) {
+      if (ALLOWED_UPLOAD_MIME.has(f.type)) {
+        allowed.push(f);
+      } else {
+        // 不告诉用户——paste 场景下他们可能根本不知道剪贴板里有什么；
+        // 留个 console.warn 方便调试。
+        console.warn(`attachment dropped: unsupported mime "${f.type || "(empty)"}" for ${f.name}`);
+      }
+    }
+    if (!allowed.length) return;
+    const newPreviews: LocalPreview[] = allowed.map((file) => ({
       id: Math.random().toString(36).slice(2),
       objectUrl: URL.createObjectURL(file),
       name: file.name,
-      mime: file.type || "image/png",
+      mime: file.type || "application/octet-stream",
       file,
     }));
     setPreviews((prev) => [...prev, ...newPreviews]);
@@ -100,7 +139,7 @@ export function Composer({
       const resp = await fetch(UPLOAD_URL, {
         method: "POST",
         body: file,
-        headers: { "Content-Type": file.type || "image/png" },
+        headers: { "Content-Type": file.type || "application/octet-stream" },
       });
       if (!resp.ok) {
         // 别再静默吞：server 返回 4xx/5xx 时至少打到 console，让用户/调试者看见。
@@ -132,15 +171,18 @@ export function Composer({
     if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   };
 
-  // Paste from clipboard
+  // Paste from clipboard —— 跟 addFiles 用同一份白名单（剪贴板可能带 image / 纯文本 /
+  // 不支持的格式）。不匹配的 item 直接跳过，保留 textarea 默认 paste 行为。
   const onPaste = useCallback(
     (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
-      const imageItems = Array.from(items).filter((item) => item.type.startsWith("image/"));
-      if (!imageItems.length) return;
+      const supported = Array.from(items).filter((item) =>
+        ALLOWED_UPLOAD_MIME.has(item.type)
+      );
+      if (!supported.length) return;
       e.preventDefault();
-      const files = imageItems
+      const files = supported
         .map((item) => item.getAsFile())
         .filter(Boolean) as File[];
       addFiles(files);
@@ -255,7 +297,7 @@ export function Composer({
 
           {isDragging && (
             <div className="drop-overlay">
-              <span>Drop image to attach</span>
+              <span>Drop file to attach (image, PDF, txt, md, csv, json)</span>
             </div>
           )}
 
@@ -265,7 +307,7 @@ export function Composer({
               ref={taRef}
               rows={1}
               value={value}
-              placeholder="Message MonoX… (paste or drop images)"
+              placeholder="Message MonoX… (paste or drop images, PDFs, txt, md, csv, json)"
               onChange={(e) => {
                 setValue(e.target.value);
                 resize();
@@ -286,7 +328,7 @@ export function Composer({
             <button
               className="attach-btn"
               onClick={() => fileInputRef.current?.click()}
-              title="Attach image"
+              title="Attach file (image, PDF, txt, md, csv, json)"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -304,7 +346,7 @@ export function Composer({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept={ACCEPT_ATTR}
               multiple
               style={{ display: "none" }}
               onChange={(e) => {

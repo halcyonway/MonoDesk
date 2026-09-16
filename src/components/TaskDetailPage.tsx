@@ -17,6 +17,7 @@ import { StreamEngine, type Msg } from "../stream/engine";
 import { Conversation } from "./Conversation";
 import { shortId } from "./TasksPage";
 import { tasksStore, useTask, type TaskEventFrame } from "../store/tasks";
+import { renderMarkdown } from "../stream/markdown";
 import type { MonoDeskEvent } from "../ws/protocol";
 import type { MonoDeskWS } from "../ws/client";
 
@@ -106,7 +107,40 @@ export function TaskDetailPage({
   const title = s?.description || shortId(taskId);
   const parentShort = shortId(s?.parent_session_key || "—");
   const timeoutMin = s && s.timeout_sec > 0 ? Math.round(s.timeout_sec / 60) : 0;
-  const metaEntries = s?.meta ? Object.entries(s.meta) : [];
+  // Meta 区块：fallback 字段（页头没显示的） + LLM 填的 meta（覆盖 fallback）。
+  // LLM 不填 meta 时只显示 fallback，避免「有的 task 有 Meta 有的没」UI 不一致。
+  // 每个 fallback 字段单独 try/catch —— 任一 NaN / 无效时间戳不能让整个 component 崩溃。
+  const toIso = (ts: unknown): string | null => {
+    if (typeof ts !== "number" || !Number.isFinite(ts)) return null;
+    try {
+      return new Date(ts * 1000).toISOString();
+    } catch {
+      return null;
+    }
+  };
+  const fallbackMeta: Record<string, unknown> = {};
+  if (s) {
+    const ci = toIso(s.created_at);
+    if (ci) fallbackMeta["created_at"] = ci;
+    if (s.started_at && s.started_at !== s.created_at) {
+      const si = toIso(s.started_at);
+      if (si) fallbackMeta["started_at"] = si;
+    }
+    if (s.finished_at) {
+      const fi = toIso(s.finished_at);
+      if (fi) fallbackMeta["finished_at"] = fi;
+      const dur = s.finished_at - (s.started_at ?? s.created_at);
+      if (typeof dur === "number" && Number.isFinite(dur) && dur > 0) {
+        fallbackMeta["duration_sec"] = Number(dur.toFixed(1));
+      }
+    }
+    if (s.error) fallbackMeta["error"] = s.error;
+    // 故意不展示 final_text —— 它是 LLM 最终回复全文（可能几千字符），不属于
+    // metadata。Events 段本就该显示 final_text child block（agent message）。
+    // 塞进 Meta 区块会把页面撑到几千行高，挤掉 Events / 导致不可滚动。
+  }
+  const llmMeta: Record<string, unknown> = (s?.meta && Object.keys(s.meta).length > 0) ? s.meta : {};
+  const metaEntries = Object.entries({ ...fallbackMeta, ...llmMeta });
 
   return (
     <div id="task-detail" className="container">
@@ -169,6 +203,19 @@ export function TaskDetailPage({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Result —— completed / failed / cancelled 时 LLM final_text 用 markdown
+          渲染（不截断、不 JSON 化）。这是 task 的执行结果，必须完整可读。
+          running 时 s.final_text 通常是 null，不渲染。 */}
+      {s?.final_text && (
+        <div className="detail-section">
+          <div className="section-title">Result</div>
+          <div
+            className="detail-result"
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(s.final_text) }}
+          />
         </div>
       )}
 

@@ -84,7 +84,7 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 | `image/*` | `<img src={a.url} alt={a.name} title={a.name} />` | 72×72 方形 cover-fill |
 | 其它（含 `application/pdf` / text/* / json） | `<a class="doc-thumb" href={a.url} target="_blank"><svg/>{filename} {MIME_LABEL}</a>` | 豆包风格卡片：auto 宽 + 横向（icon 左 + 文件名 + mime label 右）；点 → 新 tab 浏览器/system viewer 打开原文件 |
 
-**不渲染缩略图预览**（用户原话「不需要缩略图，有文件信息即可」）：
+**不渲染缩略图预览**：
 - PDF / 文本类附件靠文件名 + mime label 信息就够，不需要 inline 缩略图
 - 之前尝试让 `<img src=...pdf>` 渲染 PDF 第一页（依赖 server `application/pdf` mime
   + 浏览器引擎支持 + PDF 文件大小），实测截图里 PDF bubble 是空白 / broken image
@@ -93,7 +93,7 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 - 之前 MonoX debug server ext_map 补 `.pdf/.md/.csv/.json/.txt` 这条修复保留
   （作为 hover preview / 未来 lightbox 的基础；不依赖也不废弃）
 
-**bubble 不渲染 `×` 关闭按钮**（用户原话「发出去就不需要关闭按钮了」）：
+**bubble 不渲染 `×` 关闭按钮**：
 - composer 预览是上传中态，需要 remove 按钮
 - bubble 是历史消息视图，附件已发不可改；保留 `×` 反而误导用户
 

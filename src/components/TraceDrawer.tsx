@@ -1,6 +1,6 @@
 // TraceDrawer: 右侧抽屉，展示一次 Run 的 tree trace。
 //
-// 设计原则（用户原话）：
+// 设计原则：
 // - 是 tree，不是 timeline
 // - messages 节点美化渲染（不是裸 JSON）
 // - 折叠/展开：reasoning 默认展开（最重要），act/compress 默认折叠

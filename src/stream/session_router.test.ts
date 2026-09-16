@@ -1,5 +1,5 @@
-// SessionRouter 单测：覆盖用户原话「切换新会话输入框还在 compressing…
-// 历史错放到新会话里」这个 bug 类。
+// SessionRouter 单测：覆盖「切换新会话输入框还在 compressing… 历史错放到
+// 新会话里」这一类 bug。
 //
 // 关键性质：所有 setter 写「streamKey 当前指向的 entry」，streamKey 由 App 控制
 //（切视图不切 streamKey，只在发消息时切 streamKey）。所以即使 UI 正在看 session B，
@@ -147,7 +147,7 @@ describe("viewForState", () => {
   });
 
   it("returns empty default when active session has no entry (e.g. brand-new session)", () => {
-    // 用户原话 bug 类：「切到新会话，输入框还在 compressing… 历史串到新会话」。
+    // bug 类：切到新会话，输入框还在 compressing… 历史串到新会话。
     // 这个不变量保证：active key 不在 map 时，绝对拿不到「上一个会话」的数据。
     const map: StateMap = {
       A: { ...EMPTY, status: "compressing", msgs: [{ id: "1" } as any], model: "M1" },

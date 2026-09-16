@@ -149,7 +149,7 @@ function docIconFor(mime: string) {
 
 // bash tool 专用：args 是 JSON 字符串，从中提取 LLM 填的 `target` 字段。
 // 优先级：target（设计意图）> cmd（fallback，截断后的 bash 命令）。
-// 长度上限 30 字符（用户原话「10 字以内」≈ 30 ASCII），超出加 …
+// 长度上限 30 字符（约 10 个汉字 / 30 个 ASCII），超出加 …。
 // 返回 null → UI 不渲染。
 function bashSummary(args: string | undefined): string | null {
   if (!args) return null;

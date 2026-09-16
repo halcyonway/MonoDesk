@@ -82,35 +82,29 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 | mime 分支 | 元素 | 说明 |
 |---|---|---|
 | `image/*` | `<img src={a.url} alt={a.name} title={a.name} />` | 72×72 方形 cover-fill |
-| `application/pdf` | `<a class="msg-attachment-link" href={a.url} target="_blank"><img src={a.url}/></a>` | 72×72 方形 cover-fill，浏览器对 `<img src=...pdf>` 自动渲染第一页；外层 `<a>` 让点击 → 新 tab 打开完整 PDF（Safari / Preview） |
-| 其它（`text/markdown` / `text/csv` / `application/json` / `text/plain` / 未知） | `<a class="doc-thumb" href={a.url} target="_blank"><svg/>{MIME_LABEL}</a>` | 72×72 方形 box，inline SVG icon + 大写 mime label（`PDF` / `CSV` / `JSON` / `TXT` / `MD`）；文本类 mime 浏览器 `<img>` 渲染不出东西，用 SVG 兜底 |
+| 其它（含 `application/pdf` / text/* / json） | `<a class="doc-thumb" href={a.url} target="_blank"><svg/>{filename} {MIME_LABEL}</a>` | 豆包风格卡片：auto 宽 + 横向（icon 左 + 文件名 + mime label 右）；点 → 新 tab 浏览器/system viewer 打开原文件 |
 
-**视觉一致性**：image 和 PDF 都走 `<img>` 72×72 cover-fill，跟 composer 预览（Image #25）
-同 box size 视觉一致。doc-thumb（文本类兜底）也是 72×72 但内部是 SVG + label，
-用户能立刻看出 mime 类型。
+**不渲染缩略图预览**（用户原话「不需要缩略图，有文件信息即可」）：
+- PDF / 文本类附件靠文件名 + mime label 信息就够，不需要 inline 缩略图
+- 之前尝试让 `<img src=...pdf>` 渲染 PDF 第一页（依赖 server `application/pdf` mime
+  + 浏览器引擎支持 + PDF 文件大小），实测截图里 PDF bubble 是空白 / broken image
+  （Image #26）—— 缩略图渲染不可靠，干脆不做了
+- 跟豆包方案一致：文件名 + mime 是足够信息，点链接 → 浏览器/PDF reader 看完整版
+- 之前 MonoX debug server ext_map 补 `.pdf/.md/.csv/.json/.txt` 这条修复保留
+  （作为 hover preview / 未来 lightbox 的基础；不依赖也不废弃）
 
 **bubble 不渲染 `×` 关闭按钮**（用户原话「发出去就不需要关闭按钮了」）：
 - composer 预览是上传中态，需要 remove 按钮
 - bubble 是历史消息视图，附件已发不可改；保留 `×` 反而误导用户
-- 跟 assistant message children 的其它 72×72 box（tool block、reasoning block）一致视觉节奏
 
-**PDF 为什么走 `<img>` 而不是 `<object>`**：`<object data=... type="application/pdf">` 在
-72×72 小尺寸容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom toolbar，
-丑且不实用。`<img>` 走浏览器原生 PDF 缩略图渲染（Safari / Chrome / macOS WebView /
-Tauri WebView 全部支持），视觉跟 composer blob URL 一致。
-
-**PDF 渲染依赖 server 返回 `application/pdf` mime**：`MonoX/core/debug_server.py`
-的 `ext_map` 之前漏了 `.pdf / .md / .csv / .json / .txt`，导致 server 返回
-`application/octet-stream`，`<img src=...pdf>` 拿不到正确 mime 渲染失败 → 显示 broken image。
-修了 server ext_map 后 PDF bubble 跟 composer 视觉一致（PDF 第一页缩略图）。
-
-**为什么 PDF 还要包 `<a>`**：thumbnail 视觉预览 ≠ 阅读器。点击 thumbnail →
-新 tab 打开原 PDF（Safari / Preview / Chrome 全屏 viewer），用户有完整阅读体验。
-
-**为什么文本类 mime（md/csv/json/txt）不用 `<img>` 走 cover-fill**：
-浏览器对 `text/*` / `application/json` 的 `<img>` 渲染结果是空白或 broken image
-（不是图像格式）；保留 SVG icon + 大写 mime label 兜底，用户一眼能看出是文本类
-（`MD` / `CSV` / `JSON` / `TXT`）而不是 PDF。
+**豆包风格卡片布局**（`.doc-thumb`）：
+- `flex` 横向 + `gap: 10px` + `padding: 8px 12px`
+- `min-width: 180px; max-width: 280px`（最长文件名决定宽度，文件名过长 ellipsis 截断）
+- 左：inline SVG icon（PDF 红色横幅 + "PDF" 字样；其它 mime document + 横线）
+- 右：两行（`.doc-thumb-meta` column flex）—— 第一行文件名（`font-size: 12.5px`），
+  第二行大写 mime label（`font-size: 10px`，letter-spacing 0.06em）
+- 背景 `var(--bg-soft)` + 1px border + 圆角 8px
+- hover 背景变 `var(--bg-hover)` + border 变 `var(--border-strong)`
 
 **`docLabelFor(mime)` 规则**：
 

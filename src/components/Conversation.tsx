@@ -310,31 +310,21 @@ function MsgView({
             <div className="msg-attachments">
               {msg.attachments.map((a) => (
                 <div key={a.url} className="msg-attachment-thumb">
-                  {/* 三路由按 mime 分流：
+                  {/* 两路由按 mime 分流：
                       - image/* → <img> 72×72 方形 cover-fill
-                      - application/pdf → <a><img></a> —— 跟 composer 预览保持一致
-                        视觉（浏览器对 <img src=...pdf> 自动渲染第一页，靠 server
-                        ext_map 返回 application/pdf mime 才能正确渲染）。
-                        <a> 包 <img> 让点击 → 新 tab 打开完整 PDF（Safari / Preview），
-                        bubble 是 thumbnail 不是 reader。
-                      - 其它（txt / md / csv / json）→ doc-thumb 卡片（SVG icon + 大写
-                        mime label）。文本类 mime 浏览器无法用 <img> 渲染，保留 SVG 兜底。
-                      **不渲染 × 关闭按钮**（用户原话「发出去就不需要关闭按钮」—— bubble
-                      是历史消息视图，附件不可改）。 */}
+                      - 其它（PDF / txt / md / csv / json）→ doc-thumb 卡片
+                        （SVG icon + 文件名 + mime label），点击 → 新 tab 打开原文件
+                      **不渲染缩略图预览**（用户原话「不需要缩略图，有文件信息即可」——
+                      之前 PDF 走 <img src=...pdf> 让浏览器自动渲染第一页，但实际
+                      截图里 PDF bubble 是空白 / broken image（Image #26），PDF
+                      缩略图依赖浏览器引擎 + 文件大小 + mime 准确性，不可靠）。
+                      跟豆包方案一致：文件名 + mime 是足够信息，点链接 → 浏览器/PDF
+                      reader 看完整版。
+                      **不渲染 × 关闭按钮**（用户原话「发出去就不需要关闭按钮」——
+                      bubble 是历史消息视图，附件不可改）。 */}
                   {a.mime.startsWith("image/") ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={a.url} alt={a.name} title={a.name} />
-                  ) : a.mime === "application/pdf" ? (
-                    <a
-                      className="msg-attachment-link"
-                      href={a.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`${a.name} (open PDF in new tab)`}
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={a.url} alt={a.name} title={a.name} />
-                    </a>
                   ) : (
                     <a
                       className="doc-thumb"
@@ -344,7 +334,10 @@ function MsgView({
                       title={`${a.name} (${a.mime})`}
                     >
                       {docIconFor(a.mime)}
-                      <span className="doc-thumb-label">{docLabelFor(a.mime)}</span>
+                      <div className="doc-thumb-meta">
+                        <span className="doc-thumb-name">{a.name}</span>
+                        <span className="doc-thumb-label">{docLabelFor(a.mime)}</span>
+                      </div>
                     </a>
                   )}
                 </div>

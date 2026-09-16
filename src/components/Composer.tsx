@@ -330,6 +330,8 @@ export function Composer({
               onClick={() => fileInputRef.current?.click()}
               title="Attach file (image, PDF, txt, md, csv, json)"
             >
+              {/* paperclip — 通用「附件」语义，覆盖 image + doc 全 9 种支持格式。
+                  之前的 image icon（frame + circle + mountain）跟 PDF/csv 含义对不上。 */}
               <svg
                 viewBox="0 0 24 24"
                 width="16"
@@ -337,10 +339,10 @@ export function Composer({
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                <rect x="3" y="3" width="18" height="18" rx="3" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
             <input

@@ -171,18 +171,22 @@ export function Composer({
     if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   };
 
-  // Paste from clipboard —— 跟 addFiles 用同一份白名单（剪贴板可能带 image / 纯文本 /
-  // 不支持的格式）。不匹配的 item 直接跳过，保留 textarea 默认 paste 行为。
+  // Paste from clipboard —— 只拦「文件类」item（kind === 'file'，来自 Finder 复制 /
+  // 浏览器复制图片等）；纯文本（kind === 'string'，text/plain / text/html / text/uri-list）
+  // 一律放行，让 textarea 走默认 paste 行为。
+  //
+  // 之前 bug：把 text/plain 也当 .txt 文件收下来（getAsFile() 对 string-kind item
+  // 也会返回 File 包文本），导致用户 paste 文字时变成「附件预览」而不是输入到 textarea。
   const onPaste = useCallback(
     (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
       if (!items) return;
-      const supported = Array.from(items).filter((item) =>
-        ALLOWED_UPLOAD_MIME.has(item.type)
+      const fileItems = Array.from(items).filter(
+        (item) => item.kind === "file" && ALLOWED_UPLOAD_MIME.has(item.type)
       );
-      if (!supported.length) return;
+      if (!fileItems.length) return;
       e.preventDefault();
-      const files = supported
+      const files = fileItems
         .map((item) => item.getAsFile())
         .filter(Boolean) as File[];
       addFiles(files);

@@ -429,18 +429,25 @@ export default function App() {
       const s = snippet.trim().slice(0, 4000); // 上限 4000 字避免 user_input 过大
       const parentTitle =
         sessions.find((x) => x.key === session)?.title ?? session;
-      // 取主会话最近一条 assistant msg（≤200 字）作为上下文锚
+      // 取主会话最近一条 assistant msg（≤200 字）作为上下文锚。
+      // 注意：assistant msg 没有 .text 字段，只有 children —— 拼接所有 text child 的文本。
       const parentMsgs = sessionStates[session]?.msgs ?? [];
-      const lastAssistant = [...parentMsgs].reverse().find((m) => m.role === "assistant");
-      const parentLastMsg = lastAssistant
-        ? lastAssistant.text.trim().slice(0, 200) +
-          (lastAssistant.text.length > 200 ? "…" : "")
+      const lastAssistant = [...parentMsgs]
+        .reverse()
+        .find((m): m is Extract<Msg, { role: "assistant" }> => m.role === "assistant");
+      const assistantText = lastAssistant
+        ? lastAssistant.children
+            .filter((c): c is { id: string; kind: "text"; text?: string } => c.kind === "text")
+            .map((c) => c.text ?? "")
+            .join("")
+            .trim()
+        : "";
+      const parentLastMsg = assistantText
+        ? assistantText.slice(0, 200) + (assistantText.length > 200 ? "…" : "")
         : null;
       const fork = newForkSession(session, s);
-      // 把 fork session 加进 sidebar（持久化）—— Panel 关掉也保留
-      const next = [...sessions, fork];
-      setSessions(next);
-      saveSessions(next);
+      // Fork session 不进 sidebar —— 它是「临时」对话，Panel 关闭就消失。
+      // 也不同步到 localStorage（关掉即丢，避免污染会话列表）。
       setFloatingPanel({
         parentKey: session,
         parentTitle,
@@ -457,41 +464,51 @@ export default function App() {
     setFloatingPanel(null);
   }, []);
 
+  // ⤢ 按钮不再切走主对话。改为：组件内部 toggle expanded 状态（放大面板）。
+  // 这里只负责清浮窗指向交给 FloatingAgentPanel 自己的内部状态。
   const onExpandFloatingPanel = useCallback(() => {
-    if (!floatingPanel) return;
-    switchSession(floatingPanel.forkKey);
-    setFloatingPanel(null);
-  }, [floatingPanel, switchSession]);
+    // no-op：面板内部管理 expanded 尺寸切换
+  }, []);
 
-  // Panel 内的 send：把 snippet + parent context 包成单条 user_input 发出去
+  // Panel 内的 send：只有第一条 user_input 带 snippet + parent context（让 agent
+  // 第一次看到上下文）。后续追问就是纯文本，跟普通 session 一致 —— 上下文由
+  // agent 在 server 端的历史消息里维护。这样多轮对话不会被这坨 prefix 污染。
   const onPanelSend = useCallback(
     (text: string, attachments?: Attachment[]) => {
       if (!floatingPanel) return;
       const { parentKey, parentLastMsg, snippet, forkKey } = floatingPanel;
-      const composed = [
-        parentLastMsg ? `[From session "${parentKey}" — last assistant reply]\n${parentLastMsg}\n` : "",
-        `[Selected snippet]\n${snippet}\n`,
-        `[Your question]\n${text}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
-      engine.startTurn(composed, forkKey, attachments);
+      const isFirst =
+        (sessionStates[forkKey]?.msgs ?? []).length === 0;
+      const composed = isFirst
+        ? [
+            parentLastMsg ? `[From session "${parentKey}" — last assistant reply]\n${parentLastMsg}\n` : "",
+            `[Selected snippet]\n${snippet}\n`,
+            `[Your question]\n${text}`,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : text;
+      engine.startTurn(composed, forkKey, attachments, isFirst ? { forkQuestion: text } : undefined);
       wsRef.current?.send({
         type: "user_input",
         data: {
           text: composed,
           session_key: forkKey,
           attachments,
-          meta: {
-            fork_from: parentKey,
-            snippet,
-            parent_context: parentLastMsg,
-            ...(selectedProvider ? { model_provider: selectedProvider } : {}),
-          },
+          meta: isFirst
+            ? {
+                fork_from: parentKey,
+                snippet,
+                parent_context: parentLastMsg,
+                ...(selectedProvider ? { model_provider: selectedProvider } : {}),
+              }
+            : selectedProvider
+              ? { model_provider: selectedProvider }
+              : undefined,
         },
       });
     },
-    [floatingPanel, engine, selectedProvider]
+    [floatingPanel, engine, selectedProvider, sessionStates]
   );
 
   return (

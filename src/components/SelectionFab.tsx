@@ -31,6 +31,15 @@ export function SelectionFab({ onBranch, scopeSelector = SCOPE_DEFAULT }: Select
   // 缓存当前 text + rect —— click handler 直接读，避免 stale closure
   const pendingRef = useRef<{ text: string; rect: DOMRect } | null>(null);
 
+  // 初始 transform：放到屏幕外。**不要写在 JSX inline style**——
+  // React 每次 re-render 都会把 inline style 写回 DOM，把我们 effect 里通过
+  // setStyle 写的真实位置冲掉，导致按钮被 React 反复重置。
+  // 直接用 ref 在 mount 后写 DOM，之后只通过 effect 更新 DOM transform。
+  useEffect(() => {
+    const btn = fabRef.current;
+    if (btn) btn.style.transform = "translate(-9999px, -9999px)";
+  }, []);
+
   useEffect(() => {
     let raf = 0;
 
@@ -88,9 +97,13 @@ export function SelectionFab({ onBranch, scopeSelector = SCOPE_DEFAULT }: Select
       if (e.key === "Escape") setVisible(false);
     }
     function onMouseDown(e: MouseEvent) {
-      // 点 fab 本身不算 outside；但点别的元素会清 selection —— 让原生行为处理
-      if (fabRef.current && fabRef.current.contains(e.target as Node)) return;
-      // 延迟到 mouseup（不要在 mousedown 立刻藏，用户可能正在新位置开始 selection）
+      // 点 fab 本身：阻止 selection 收缩（mousedown 会清掉 selection，
+      // 触发 selectionchange → compute → 按钮重定位，导致 mouseup 落在别处）。
+      // preventDefault 阻止默认 selection-clear，让 click 顺利触发。
+      if (fabRef.current && fabRef.current.contains(e.target as Node)) {
+        e.preventDefault();
+        return;
+      }
     }
 
     document.addEventListener("selectionchange", schedule);
@@ -120,18 +133,18 @@ export function SelectionFab({ onBranch, scopeSelector = SCOPE_DEFAULT }: Select
       ref={fabRef}
       type="button"
       className={"selection-fab" + (visible ? " visible" : "")}
-      onMouseDown={(e) => e.preventDefault()} // 防止 click 抢走 selection
       onClick={handleClick}
       title="Branch into floating agent session"
       aria-label="branch into floating agent session"
-      // 初始位置：屏幕外左上，避免未 compute 时闪烁在 (0,0)
-      style={{ transform: "translate(-9999px, -9999px)" }}
     >
-      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-        {/* sparkle / branch icon —— 四角 + 中心小点 */}
-        <path d="M3 1l1 3M3 1l-1 3M3 1l3 1M3 1l-3 1" strokeLinecap="round" />
-        <path d="M13 8l1 3M13 8l-1 3M13 8l3 1M13 8l-3 1" strokeLinecap="round" />
-        <circle cx="8" cy="8" r="1.2" fill="currentColor" />
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        {/* 左节点 + 主干 + 上下分叉 + 末端实心点 —— 像 git fork graph */}
+        <circle cx="4.5" cy="10" r="1.4" fill="currentColor" stroke="none" />
+        <path d="M6 10h7" />
+        <path d="M9.5 10c0-2 1.5-3.2 3.5-3.2" />
+        <path d="M9.5 10c0 2 1.5 3.2 3.5 3.2" />
+        <circle cx="13" cy="6.8" r="1.2" fill="currentColor" stroke="none" />
+        <circle cx="13" cy="13.2" r="1.2" fill="currentColor" stroke="none" />
       </svg>
     </button>
   );

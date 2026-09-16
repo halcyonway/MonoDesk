@@ -44,6 +44,9 @@ export function FloatingAgentPanel({
   onExpand,
 }: FloatingAgentPanelProps) {
   const [offset, setOffset] = useState(PANEL_DEFAULT_OFFSET);
+  // ⤢ 按钮 toggle expanded 尺寸（不再切走主对话）。
+  // expanded = 大尺寸（720×720），否则默认 440×540（具体看 CSS）。
+  const [expanded, setExpanded] = useState(false);
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -109,7 +112,7 @@ export function FloatingAgentPanel({
   return (
     <div
       ref={panelRef}
-      className="floating-panel"
+      className={"floating-panel" + (expanded ? " expanded" : "")}
       style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
     >
       {/* header —— 可拖拽区域 */}
@@ -125,15 +128,22 @@ export function FloatingAgentPanel({
         <div className="floating-panel-actions">
           <button
             className="icon-btn-round-mini"
-            title="expand to full view"
-            aria-label="expand to full view"
-            onClick={onExpand}
+            title={expanded ? "collapse" : "expand"}
+            aria-label={expanded ? "collapse panel" : "expand panel"}
+            onClick={() => setExpanded((e) => !e)}
             type="button"
           >
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <path d="M3 9v3a1 1 0 001 1h3M13 9V7a1 1 0 00-1-1H9M3 7V4M13 7v0" />
-              <path d="M3 3l3 3M13 13l-3-3" />
-            </svg>
+            {expanded ? (
+              // collapse: 四角向内收
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 3L3 6M10 3l3 3M6 13l-3-3M10 13l3-3" />
+              </svg>
+            ) : (
+              // expand: 四角向外扩
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6l3-3M13 6l-3-3M3 10l3 3M13 10l-3 3" />
+              </svg>
+            )}
           </button>
           <button
             className="icon-btn-round-mini"
@@ -149,17 +159,22 @@ export function FloatingAgentPanel({
         </div>
       </div>
 
-      {/* context —— snippet + 可折叠 parent */}
+      {/* context —— snippet 引用块 + 紧凑的 parent 引用（默认折叠为 1 行） */}
       <div className="floating-panel-context">
         <div className="snippet-quote">
-          <div className="snippet-label">SELECTED</div>
-          <div className="snippet-text">{snippet}</div>
+          <div className="quote-bar" />
+          <div className="quote-body">
+            <div className="quote-label">SELECTED FROM {parentTitle}</div>
+            <div className="quote-text">{snippet}</div>
+          </div>
         </div>
         {parentLastMsg && (
           <details className="parent-context">
-            <summary>From {parentTitle}</summary>
+            <summary>
+              <span className="parent-context-label">PARENT CONTEXT</span>
+              <span className="parent-context-preview">{parentLastMsg}</span>
+            </summary>
             <div className="parent-msg">{parentLastMsg}</div>
-            <div className="parent-key">session: {parentKey}</div>
           </details>
         )}
       </div>

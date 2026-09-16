@@ -246,6 +246,21 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
   max-width: 80%;
   border: 1px solid transparent;
 }
+/* Fork session 首条 user msg：显示 ⓘ 标记「带 context」，label 行更轻量 */
+.msg.user.fork .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.msg-fork-tag {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  background: transparent;
+  padding: 0;
+  border: none;
+}
 .msg.assistant .stream { width: 100%; }
 
 /* pending loading 指示器（TTFT 期间显示） */
@@ -1593,29 +1608,50 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 .selection-fab {
   position: fixed;
   top: 0; left: 0;             /* base anchor；transform 是实际位置 */
-  width: 32px; height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: var(--accent);
-  color: #fff;
+  width: 34px; height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(79, 70, 229, 0.22);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #4f46e5;
   display: grid; place-items: center;
   cursor: pointer;
   z-index: 9000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18), 0 0 0 4px var(--accent-soft);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 4px 14px rgba(79, 70, 229, 0.18),
+    0 1px 3px rgba(0, 0, 0, 0.06);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  /* 不 transition transform —— 否则首次出现时从 -9999px 飞到目标点，看起来"飞过来"。
+     位置 = 计算值；transition 只管 opacity fade-in / out。 */
+  transition: opacity 0.18s ease, background 0.15s ease, border-color 0.15s ease;
   will-change: transform, opacity;
+}
+html[data-theme="dark"] .selection-fab {
+  background: rgba(22, 22, 26, 0.92);
+  border-color: rgba(129, 140, 248, 0.28);
+  color: #a5b4fc;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 4px 14px rgba(129, 140, 248, 0.22),
+    0 1px 3px rgba(0, 0, 0, 0.4);
 }
 .selection-fab.visible {
   opacity: 1;
   pointer-events: auto;
 }
 .selection-fab:hover {
-  filter: brightness(1.08);
+  background: rgba(79, 70, 229, 0.06);
+  border-color: rgba(79, 70, 229, 0.4);
 }
-.selection-fab:active { transform: scale(0.94); }
-.selection-fab svg { width: 14px; height: 14px; }
+html[data-theme="dark"] .selection-fab:hover {
+  background: rgba(129, 140, 248, 0.08);
+  border-color: rgba(129, 140, 248, 0.5);
+}
+.selection-fab:active { opacity: 0.7; }
+.selection-fab svg { width: 18px; height: 18px; }
 
 /* ---------- FloatingAgentPanel ---------- */
 /* 位置 fixed bottom-right，header 可拖拽，content 分 3 段：context / stream / composer */
@@ -1639,6 +1675,11 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 @keyframes panel-fade-in-opacity {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+/* ⤢ 放大态：尺寸变大约 1.6×，仍然浮在原位 —— 不接管主对话 */
+.floating-panel.expanded {
+  width: 720px;
+  height: min(720px, 86vh);
 }
 
 /* header —— drag handle */
@@ -1698,60 +1739,95 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 }
 .snippet-quote {
   position: relative;
-  padding: 8px 10px 8px 12px;
-  border-left: 3px solid var(--accent);
-  background: var(--accent-soft);
-  border-radius: 4px;
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
 }
-.snippet-label {
+.quote-bar {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  flex: none;
+}
+.quote-body {
+  flex: 1;
+  min-width: 0;
+}
+.quote-label {
   font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--accent);
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
-.snippet-text {
-  font-size: 12px; line-height: 1.5;
+.quote-text {
+  font-size: 12px; line-height: 1.55;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 120px;
+  max-height: 140px;
   overflow-y: auto;
 }
 .parent-context {
-  margin-top: 8px;
-  font-size: 11px; color: var(--text-muted);
+  margin-top: 10px;
+  font-size: 11px;
 }
 .parent-context summary {
   cursor: pointer;
   user-select: none;
-  padding: 2px 0;
+  padding: 0;
   list-style: none;
-  display: inline-flex; align-items: center; gap: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
 }
-.parent-context summary::before {
-  content: "▸";
-  font-size: 9px;
+.parent-context summary::-webkit-details-marker { display: none; }
+.parent-context-label {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase;
   color: var(--text-faint);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.parent-context-label::before {
+  content: "▸";
+  font-size: 8px;
   transition: transform 0.12s;
 }
-.parent-context[open] summary::before { transform: rotate(90deg); }
-.parent-context summary::-webkit-details-marker { display: none; }
-.parent-context summary:hover { color: var(--text); }
+.parent-context[open] .parent-context-label::before {
+  transform: rotate(90deg);
+}
+.parent-context-preview {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
 .parent-msg {
-  padding: 6px 8px;
-  font-size: 11px; color: var(--text-muted);
+  font-size: 11px; line-height: 1.5;
+  color: var(--text-muted);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 100px;
+  max-height: 120px;
   overflow-y: auto;
-  border-left: 1px solid var(--border);
-  margin: 4px 0 4px 6px;
+  margin: 6px 0 0 10px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border);
 }
 .parent-key {
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 10px;
   color: var(--text-faint);
-  padding-left: 6px;
+  padding-left: 10px;
+  margin-top: 2px;
 }
 
 /* stream —— 复用 Conversation */
@@ -1827,13 +1903,11 @@ html[data-theme="dark"] .msg-meta-cache { color: #fbbf24; }
 }
 .panel-composer-send svg { width: 14px; height: 14px; }
 
-/* 窄屏（< 720px）退化为接近全屏 modal */
-@media (max-width: 720px) {
+/* 窄屏：尺寸保持原本的小尺寸（440×540），不让它接管屏幕。
+   只在屏幕实在塞不下时缩到留 8px 边距 —— 仍然是个 floating panel，不是 modal。 */
+@media (max-width: 520px) {
   .floating-panel {
-    left: 16px; right: 16px;
-    bottom: 16px;
-    width: auto;
-    height: calc(100vh - 32px);
-    max-height: none;
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
   }
 }

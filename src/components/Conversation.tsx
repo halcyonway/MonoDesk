@@ -204,11 +204,22 @@ function MsgView({
   onOpenTask?: (taskId: string) => void;
 }) {
   if (msg.role === "user") {
+    // Fork session 首条 user msg 把 snippet + parent context 拼到 text 里发给 agent，
+    // UI 不显示那坨 prefix —— 只显示用户实际输入的纯净问题（msg.forkQuestion）。
+    // 带 ⓘ 图标表示「这条消息带了 context（见面板顶部）」。
+    const displayText = msg.forkQuestion ?? msg.text;
     return (
-      <div className="msg user">
-        <div className="label">You</div>
+      <div className={"msg user" + (msg.forkQuestion ? " fork" : "")}>
+        <div className="label">
+          You
+          {msg.forkQuestion && (
+            <span className="msg-fork-tag" title="This message includes the selected snippet + parent context (shown above)">
+              ⓘ context attached
+            </span>
+          )}
+        </div>
         <div className="bubble">
-          {msg.text && <p>{msg.text}</p>}
+          {displayText && <p>{displayText}</p>}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="msg-attachments">
               {msg.attachments.map((a) => (

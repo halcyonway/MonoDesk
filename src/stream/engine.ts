@@ -828,9 +828,10 @@ export class StreamEngine {
     if (!el) return;
     if (!stream.streaming || stream.tokenBuf.length === 0) {
       // 流结束（被 freeze 调过）：最后一次渲染（一次性 innerHTML），DOM 收敛到稳定状态
+      // 顺手把残留 caret 移除 —— 之前 appendCaret 让 caret 永远停在 DOM 末尾，
+      // 流结束后还在闪烁（用户截图：assistant 文本流完后 caret 卡在中间位置）。
       this.consolidateFreshSpans(stream);
       el.innerHTML = renderMarkdown(stream.paintedBuf);
-      this.appendCaret(el);
       return;
     }
 

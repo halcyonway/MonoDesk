@@ -82,16 +82,44 @@ v1 阶段所有附件预览用 `<img>`，PDF 等不支持的会显示 broken ima
 | mime 分支 | 元素 | 说明 |
 |---|---|---|
 | `image/*` | `<img src={a.url} alt={a.name} title={a.name} />` | 72×72 方形 cover-fill |
-| 其它（含 `application/pdf` / text/* / json） | `<a class="doc-thumb" href={a.url} target="_blank">📄 {a.name}</a>` | 卡片式 auto 宽 + padding，icon + 文件名横向；点 → 新 tab 浏览器/system viewer 打开原文件 |
+| 其它（含 `application/pdf` / text/* / json） | `<a class="doc-thumb" href={a.url} target="_blank"><svg/>{MIME_LABEL}</a>` | 72×72 方形 box，inline SVG icon（PDF 带红色横幅 + "PDF" 字样；其它 mime document + 横线代表文本行）+ 大写 mime label（`PDF` / `CSV` / `JSON` / `TXT` / `MD`）；点 → 新 tab 浏览器/system viewer 打开原文件 |
+
+**视觉一致性**：doc-thumb 跟 image-thumb 是**同一个 72×72 方形 box**，hover 背景变
+`--bg-hover`。这样上传 PDF 跟上传 PNG 在 user message bubble 里视觉一致：
+都是「一个 thumb」。icon + label 让用户立刻知道 mime 类型（不用点击展开）。
+
+**为什么不用 emoji + 文件名**（v1 风格）：
+- emoji 在 macOS / Tauri WebView / 不同字体下渲染不一致（用户截图里 📄 显示成
+  broken 方块，PDF thumbnail 看着像 broken image）。
+- 文件名 = server 端 `uuid.<ext>`（如 `6ee51565534346c1a675f8d3683075ce.pdf`），
+  一长串 hex 是 noise；用户不关心 server 文件名，只关心 mime 类型。
+- 横向 emoji + 文件名布局让 doc-thumb 卡片宽度自适应（最长 240px），跟 image
+  的 72×72 方形不一致，多种附件并存时 bubble 行高参差。
+
+**为什么用 inline SVG**：
+- 不引入图标库（保持 emoji + 内联 SVG 的当前形态）。
+- SVG 颜色走 `currentColor` / `var(--accent)`，light/dark theme 自动跟随。
+- PDF 单独走「document + 折叠角 + 红色横幅 + "PDF" 字样」视觉；其它 mime
+  走「document + 折叠角 + 横线代表内容行」，横线数量暗示是文本类。
+
+**`docLabelFor(mime)` 规则**：
+
+| mime | label |
+|---|---|
+| `application/pdf` | `PDF` |
+| `application/json` | `JSON` |
+| `text/csv` | `CSV` |
+| `text/markdown` | `MD` |
+| `text/plain` | `TXT` |
+| 其它 | mime 子类型首段大写，取前 4 字符（如 `application/zip` → `ZIP`） |
+
+**`title` 属性保留全名**：`title={\`${a.name} (${a.mime})\`}` —— hover tooltip
+还能看到完整文件名 + mime 串，作为兜底信息（屏幕阅读器友好）。
 
 **不再用 `<object>`**：之前 PDF 单独走 `<object>` 调浏览器原生 PDF viewer，但
 小尺寸（72×72）容器里 PDF 第一页被压成残影 + macOS WebView hover 弹内置 zoom
-toolbar，丑且不实用。bubble 是「文件名 + 打开」入口，不是阅读器；完整 PDF
+toolbar，丑且不实用。bubble 是「缩略图 + 打开」入口，不是阅读器；完整 PDF
 体验让用户点链接到 browser/system viewer 看。
-
-**doc-thumb 跟 composer 预览保持一致风格**（`📄 + 文件名`，hover 背景变），
-但 bubble 里 doc-thumb 多了「点击新 tab 打开」行为，composer 里是「点 → lightbox
-放大 / remove」。
 
 **为什么不用 `<iframe>` 替代 `<object>`**：iframe sandbox 更严但 Safari / Tauri WebView
 对 PDF iframe 支持参差，object 是最稳的 cross-engine 选择。

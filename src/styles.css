@@ -677,28 +677,35 @@ html[data-theme="dark"] #composer {
   object-fit: cover;
   border-radius: 7px;
 }
-/* doc attachment（PDF / txt / md / csv / json）：卡片式 auto 宽 + padding，
-   icon + 文件名横向排。文件名过长 ellipsis 截断。点 → 新 tab 打开原文件。 */
+/* doc attachment（PDF / txt / md / csv / json）：视觉跟 image-thumb 保持一致
+   —— 72×72 方形 box + 居中 svg icon + 大写 mime label（PDF / CSV / JSON /
+   TXT / MD）。不用 emoji（macOS / Tauri WebView / 不同字体下渲染不一致），
+   不用文件名（server 命名是 uuid hex 噪声）。整块点 → 新 tab 打开原文件。 */
 .msg-attachment-thumb > .doc-thumb {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px;
-  min-width: 72px; max-width: 240px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 4px;
+  width: 72px; height: 72px;
+  padding: 6px;
   text-decoration: none;
-  color: var(--text);
-  font-size: 12.5px;
-  line-height: 1.3;
+  color: var(--text-faint);
+  background: var(--bg-soft);
+  border-radius: 7px;
+  box-sizing: border-box;
 }
 .msg-attachment-thumb > .doc-thumb:hover {
   background: var(--bg-hover);
-  border-color: var(--border-strong);
+  color: var(--text);
 }
-.msg-attachment-thumb > .doc-thumb-icon {
-  font-size: 18px;
+.msg-attachment-thumb > .doc-thumb .doc-thumb-svg {
   flex: none;
 }
-.msg-attachment-thumb > .doc-thumb-name {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-weight: 500;
+.msg-attachment-thumb > .doc-thumb-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: inherit;
+  line-height: 1;
 }
 
 /* ---------- attachment preview strip (composer) ---------- */

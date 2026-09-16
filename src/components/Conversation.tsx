@@ -89,6 +89,64 @@ const ReasonBlock = memo(function ReasonBlock({
 
 // ---- 工具块：running 时本地计时，done 时自动折叠展示结果 ----
 
+// doc-thumb 视觉跟 composer 预览保持一致：72×72 方形 box，居中放 mime 专门
+// icon + 大写 mime label（PDF / CSV / JSON / TXT / MD）。不用 emoji —— emoji
+// 在 macOS / Tauri WebView / 不同字体下渲染不一致（用户截图里 📄 显示成
+// broken 方块）；不用文件名 —— server 命名是 uuid hex（`6ee51565534346c1a675f8d3683075ce.pdf`）
+// 一长串是 noise，不如直接告诉用户这是 PDF。
+//
+// icon 是 inline SVG：通用 document 轮廓 + 不同 mime 的细节（PDF：折叠角 +
+// 红色条；CSV/JSON/TXT/MD：横线代表内容行）。颜色走 var(--text-faint) /
+// var(--accent) 让 light/dark theme 自动跟随。
+
+function docLabelFor(mime: string): string {
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "application/json") return "JSON";
+  if (mime === "text/csv") return "CSV";
+  if (mime === "text/markdown") return "MD";
+  if (mime === "text/plain") return "TXT";
+  // 兜底：取 mime 子类型首段大写
+  const sub = mime.split("/")[1] || "FILE";
+  return sub.toUpperCase().slice(0, 4);
+}
+
+function docIconFor(mime: string) {
+  const common = {
+    viewBox: "0 0 48 48",
+    width: 36,
+    height: 36,
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: "doc-thumb-svg",
+  };
+  if (mime === "application/pdf") {
+    // document + folded corner + 红色 PDF 横幅
+    return (
+      <svg {...common}>
+        <path d="M14 6h14l8 8v28a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+        <path d="M28 6v8h8" />
+        <rect x="14" y="26" width="20" height="14" rx="1.5" fill="var(--accent-soft)" stroke="var(--accent)" />
+        <text x="24" y="36" textAnchor="middle" fontSize="8" fontWeight="700" fill="var(--accent)" stroke="none">
+          PDF
+        </text>
+      </svg>
+    );
+  }
+  // 其它：document + 折角 + 横线代表文本内容
+  return (
+    <svg {...common}>
+      <path d="M14 6h14l8 8v28a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+      <path d="M28 6v8h8" />
+      <line x1="17" y1="22" x2="33" y2="22" />
+      <line x1="17" y1="28" x2="33" y2="28" />
+      <line x1="17" y1="34" x2="27" y2="34" />
+    </svg>
+  );
+}
+
 // bash tool 专用：args 是 JSON 字符串，从中提取 LLM 填的 `target` 字段。
 // 优先级：target（设计意图）> cmd（fallback，截断后的 bash 命令）。
 // 长度上限 30 字符（用户原话「10 字以内」≈ 30 ASCII），超出加 …
@@ -271,8 +329,8 @@ function MsgView({
                       rel="noreferrer"
                       title={`${a.name} (${a.mime})`}
                     >
-                      <span className="doc-thumb-icon" aria-hidden>📄</span>
-                      <span className="doc-thumb-name">{a.name}</span>
+                      {docIconFor(a.mime)}
+                      <span className="doc-thumb-label">{docLabelFor(a.mime)}</span>
                     </a>
                   )}
                 </div>

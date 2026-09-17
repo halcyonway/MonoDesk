@@ -675,3 +675,180 @@ describe("paintReasoning release rate (#polish)", () => {
     expect(stream.reasoningPainted).toBe(0);
   });
 });
+
+describe("jbPlayhead deadlock between turns (fix: token 卡到 final 才渲染)", () => {
+  // 根因：freezeText（tool_start / status 切换触发）把 jbPlayhead 清成 0，但
+  // firstTokenAt 只在 startTurn（用户发消息）时清零。同一 run 的第二个 turn
+  // token 到达时 firstTokenAt !== 0 → 跳过播放头初始化 → jbPlayhead 停在 0，
+  // 而字符 arriveAt 是 performance.now()（巨大值）→ 解锁条件永不满足 →
+  // UI 全程无流式，直到 final freeze 一次性 patch 完整文本。
+
+  it("second turn's tokens keep streaming after a mid-run freeze", () => {
+    const { router } = makeCallbacks();
+    const engine = new StreamEngine(router);
+
+    // useFakeTimers 必须在 dispatch 之前（否则 scheduleFlush 的真实 timer 抓不到，
+    // 见 paintReasoning 测试的同款注释）；performance.now 用 spy 精确控制时间线。
+    vi.useFakeTimers();
+    const nowSpy = vi.spyOn(performance, "now");
+    let fakeT = 1000;
+    nowSpy.mockImplementation(() => fakeT);
+
+    // turn #1：正常流
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "turn one" } });
+
+    // tool_start 触发 freezeText（模拟 turn #1 结束进 tool call）
+    engine.dispatch({
+      type: "tool_start",
+      data: { session_key: "s1", name: "bash", args: {}, call_id: "c1" },
+    });
+
+    // turn #2：新一轮 thinking + token。fakeT 跳到很远的未来 —— 模拟真实场景里
+    // arriveAt（performance.now()）远大于被 freeze 清零的 jbPlayhead。
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    fakeT = 60000;
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "second turn" } });
+
+    const internal = engine as unknown as {
+      streams: Map<string, { curTextId: string | null; painted: number }>;
+    };
+    const stream = internal.streams.get("s1")!;
+    expect(stream.curTextId).toBeTruthy();
+
+    // bind DOM 让 paintText 能跑（模拟 React mount 完成）
+    engine.bindAssistant("s1", document.createElement("div"));
+
+    for (let i = 0; i < 20; i++) vi.advanceTimersByTime(33);
+
+    // 修复前：jbPlayhead 停在 0（freeze 清零 + 初始化被跳过），解锁条件永不满足 → painted === 0
+    expect(stream.painted).toBeGreaterThan(0);
+
+    nowSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it("does not create duplicate text children while assistant DOM is not yet bound", () => {
+    const { router, state } = makeCallbacks();
+    const engine = new StreamEngine(router);
+
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    // React 还没 mount（bindAssistant 未调用）时连续两个 token
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "aaaa" } });
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "bbbb" } });
+
+    const last = state.msgs[state.msgs.length - 1];
+    const textChildren = last.role === "assistant" ? last.children.filter((c) => c.kind === "text") : [];
+    // 修复前：每个 token 都走 !assistantEl 分支 → 2 个 text child + 首个的队列被清空
+    expect(textChildren.length).toBe(1);
+  });
+
+  it("re-baselines firstTokenAt / userSendTime on a new text stream (turn #2+)", () => {
+    const { router } = makeCallbacks();
+    const engine = new StreamEngine(router);
+
+    // 用 spy 精确控制时间线：turn #1 在 T=1000，turn #2 在 T=5000
+    const nowSpy = vi.spyOn(performance, "now");
+    let fakeT = 1000;
+    nowSpy.mockImplementation(() => fakeT);
+
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "turn one" } });
+
+    const internal = engine as unknown as {
+      streams: Map<string, { firstTokenAt: number; userSendTime: number; jbPlayhead: number }>;
+    };
+    const stream = internal.streams.get("s1")!;
+    expect(stream.firstTokenAt).toBe(1000);
+
+    // turn #2：freeze 后 4s 才来新 token
+    engine.dispatch({
+      type: "tool_start",
+      data: { session_key: "s1", name: "bash", args: {}, call_id: "c1" },
+    });
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    fakeT = 5000;
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "turn two" } });
+
+    // 修复前：firstTokenAt 残留 1000 → 初始化块被跳过 → jbPlayhead 停留在 freeze 清的 0
+    // 修复后：firstTokenAt / userSendTime 重新取样 = 5000，播放头 = 5000 + TARGET_BUFFER_MS(120)
+    expect(stream.firstTokenAt).toBe(5000);
+    expect(stream.userSendTime).toBe(5000);
+    expect(stream.jbPlayhead).toBe(5000 + 120);
+
+    nowSpy.mockRestore();
+  });
+
+  it("tool→text 跨 turn 共用同一条 assistant msg（不新建）", () => {
+    // 一次 user_input 触发的完整 run 对应 UI 上一个连续的 AGENT 块。
+    // tool turn 完成（tool_start/tool_end）后 server 进入下一轮 LLM（status(tooling) →
+    // status(thinking)）—— 此期间不新建 assistant msg，turn #2 的 text child 由
+    // appendChild 直接推入上一轮已 freeze 的 assistant msg（见 appendChild
+    // line 767 "if last.role === assistant" 复用分支）。
+    //
+    // 历史背景：旧实现让 ensureTurn 看 !turnOpen 触发；tool turn 完成后
+    // s.turnOpen 残留 true，ensureTurn 跳过，appendChild 仍然复用旧 msg，
+    // 这本来是对的——问题是 jbPlayhead 被 freezeText 清零 + firstTokenAt
+    // 残留旧值导致 token 永远不解锁（见 jbPlayhead deadlock 修复）。
+    // 修复 jbPlayhead 死锁 + App.tsx turnStartAt 重置后，appendChild 复用
+    // 旧 msg 的语义能正确工作。
+    const { router, state } = makeCallbacks();
+    const engine = new StreamEngine(router);
+
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "let me search" } });
+    engine.dispatch({
+      type: "tool_start",
+      data: { session_key: "s1", name: "bash", args: {}, call_id: "c1" },
+    });
+    engine.dispatch({
+      type: "tool_end",
+      data: {
+        session_key: "s1",
+        name: "bash",
+        result: { call_id: "c1", status: "ok", stdout: "ok", stderr: "", exit_code: 0, truncated: false, budget_id: null },
+        latency_ms: 100,
+      },
+    });
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "tooling" } });
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+
+    // msgs = [user, assistant]。length 仍是 2（status(thinking) 不新建）。
+    const msgsBeforeTurn2 = state.msgs.length;
+    expect(msgsBeforeTurn2).toBe(2);
+
+    // turn #2 首个 token → appendChild 推 text child 进上一条 assistant msg
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "answer" } });
+
+    expect(state.msgs.length).toBe(2);
+    const agent = state.msgs[state.msgs.length - 1];
+    if (agent.role !== "assistant") throw new Error("expected assistant");
+    const childKinds = agent.children.map((c) => c.kind);
+    // 跨 turn 的 text child 全部挂在同一条 assistant msg 上
+    expect(childKinds.filter((k) => k === "text").length).toBe(2);
+    expect(childKinds.filter((k) => k === "tool").length).toBe(1);
+  });
+
+  it("ensureTurn reuses the streaming assistant msg (no duplicate empty msg within the same turn)", () => {
+    // 同一个 turn 内连续 reasoning + token 不应反复新建空 assistant msg。
+    const { router, state } = makeCallbacks();
+    const engine = new StreamEngine(router);
+
+    engine.startTurn("hi", "s1");
+    engine.dispatch({ type: "status", data: { session_key: "s1", state: "thinking" } });
+    const msgsAfterTurnStart = state.msgs.length; // startTurn + status(thinking) 已建 1 个 assistant msg
+    expect(msgsAfterTurnStart).toBeGreaterThan(0);
+
+    // 同 turn 内多帧：不应再新建
+    engine.dispatch({ type: "reasoning", data: { session_key: "s1", text: "think1" } });
+    engine.dispatch({ type: "reasoning", data: { session_key: "s1", text: "think2" } });
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "answer1" } });
+    engine.dispatch({ type: "token", data: { session_key: "s1", text: "answer2" } });
+
+    expect(state.msgs.length).toBe(msgsAfterTurnStart);
+  });
+});

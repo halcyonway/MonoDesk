@@ -432,6 +432,13 @@ export class StreamEngine {
     cb.setStatus(state);
     const s = this.streamFor(sk);
     if (state === "thinking") {
+      // 每个 run（一次 user_input 触发的完整 agent 任务）只对应一个 assistant msg。
+      // 同一 run 内的多个 turn（text/tool/reasoning）都挂这条 msg 的 children 上，
+      // UI 上呈现为一个连续的 AGENT 块（多个 turn label/THINKING 嵌套在里面）。
+      // 不再用 !turnOpen 触发：tool turn 完成后 server 不发显式 wait_io/idle，
+      // turnOpen 残留 true；也不再无条件 ensureTurn：appendChild 永远复用 last
+      // assistant（见 appendChild line 767），ensureTurn 只在 last 不是 assistant
+      // 时才需要新建（user 还没发问但 server 提前发了 thinking）。
       if (!s.turnOpen) this.ensureTurn(cb, sk);
     } else {
       this.freezeText(cb, sk);
@@ -443,6 +450,15 @@ export class StreamEngine {
   private ensureTurn(cb: EngineCallbacks, sk: string) {
     cb.setMsgs((prev) => {
       const last = prev[prev.length - 1];
+      // 上一条 assistant msg 仍处于 streaming 中（pending=true）→ 直接复用，
+      // 避免在同一个 turn 内反复新建空 msg（每条 child 都会触发重渲染）。
+      //
+      // 关键：上轮 tool turn 完成后没有显式 StatusChange(wait_io/idle)，
+      // s.turnOpen 仍为 true；新一轮 StatusChange(thinking) → onStatus 本分支
+      // 早期实现靠 !turnOpen 触发 ensureTurn，导致上一轮已 freeze 的 assistant
+      // msg 被复用 → 新 turn 的 token child 被 appendChild 推入旧 msg 末尾，
+      // 看起来"新 turn 没建出来"。判定改用 msg.pending（onFinal/freezeText
+      // 会清掉，appendChild 也会清），与状态机解耦。
       if (last && last.role === "assistant") return prev;
       return [...prev, { id: nextId(sk), role: "assistant", children: [], pending: true }];
     });
@@ -452,6 +468,8 @@ export class StreamEngine {
 
   private onReasoning(cb: EngineCallbacks, sk: string, text: string) {
     const s = this.streamFor(sk);
+    // ensureTurn 在 onStatus(thinking) 已经做过（status frame 通常领先 reasoning 帧
+    // 到达）。同 turn 内重复调用是 no-op（pending=true 时直接 return prev）。
     if (!s.turnOpen) this.ensureTurn(cb, sk);
     // 用稳定的 child id (curReasoningId) 判断，不再用 reasoningEls（它是临时绑定，
     // 会被 React 重渲染清掉）。
@@ -476,7 +494,10 @@ export class StreamEngine {
   private onToken(cb: EngineCallbacks, sk: string, text: string) {
     const s = this.streamFor(sk);
     if (!s.turnOpen) this.ensureTurn(cb, sk);
-    if (!s.assistantEl) {
+    // 新 text child 的创建条件：没有绑定的 DOM **且**没有活跃的 text child。
+    // 只判 assistantEl 的话，React mount 完成前的每个 token 都会重复建 child +
+    // 清空 jbQueue（已收字符丢流式显示 + children 膨胀）。
+    if (!s.assistantEl && s.curTextId == null) {
       this.freezeReasoning(cb, sk);
       const id = nextId(sk);
       s.curTextId = id;
@@ -487,6 +508,15 @@ export class StreamEngine {
       s.jbQueue = [];
       s.jbPlayhead = 0;
       s.jbLastFlushAt = 0;
+      // 新文本流开始 → 重置 TTFT/播放头初始化基准。同一 run 的后续 turn
+      // （tool 之后的新一轮 token）必须重新走下方 firstTokenAt===0 初始化块：
+      // freezeText 把 jbPlayhead 清成 0，而 firstTokenAt 残留上一 turn 的旧值时
+      // 初始化被跳过 → 播放头(0)永远追不上字符 arriveAt(performance.now()) →
+      // 解锁条件永不满足 → token 全部卡到 final 才一次性渲染（死锁）。
+      s.firstTokenAt = 0;
+      // TTFT 基准同步重置：否则 turn #2+ 的 ttft/total 相对上一 turn 的发送时刻
+      // 计算，数值虚大且无意义。
+      s.userSendTime = now();
     }
     if (s.firstTokenAt === 0) {
       s.firstTokenAt = now();
@@ -855,11 +885,16 @@ export class StreamEngine {
     stream.jbLastFlushAt = t;
     stream.jbPlayhead += dtMs;
 
-    // 2) 积压过大时跳过积压（drain）
+    // 2) 积压过大时跳过积压（drain）——双向保护：
+    //    超前（模型爆发）→ 快进播放头跳过等待；落后（异常清零 / 长卡顿恢复）→
+    //    快进到队首立即恢复解锁。只有单向保护时，播放头一旦落后（比如被清成 0）
+    //    解锁条件 arriveAt <= playhead 永不满足，token 会卡到 freeze 才一次性渲染。
     if (stream.jbQueue.length > 0) {
       const headLag = stream.jbPlayhead - stream.jbQueue[0].arriveAt;
       if (headLag > MAX_BUFFER_MS) {
         stream.jbPlayhead = stream.jbQueue[0].arriveAt + TARGET_BUFFER_MS;
+      } else if (-headLag > MAX_BUFFER_MS) {
+        stream.jbPlayhead = stream.jbQueue[0].arriveAt;
       }
     }
 

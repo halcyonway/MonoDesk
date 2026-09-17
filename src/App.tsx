@@ -260,6 +260,19 @@ export default function App() {
   const model: string = view.model;
   const availableProviders: string[] = view.availableProviders ?? [];
 
+  // Composer 的 elapsed 计时基准：每轮 turn 开始（thinking）重置一次。
+  // 不能只依赖 onSend（用户发问时）—— tool turn 完成后 server 不会发显式
+  // wait_io/idle，下一轮 thinking 帧来时 turnStartAt 没被重置，elapsed 累计
+  // 上一轮甚至上一整轮的时间，UI 上"thinking 24.2s"但其实只是新一轮刚开几秒。
+  // 用 ref 记上一帧 status，避免每帧 effect 重置。
+  const prevStatusRef = useRef<StatusState>(status);
+  useEffect(() => {
+    if (status === "thinking" && prevStatusRef.current !== "thinking") {
+      setTurnStartAt(performance.now());
+    }
+    prevStatusRef.current = status;
+  }, [status]);
+
   // 本 session 累计 prompt cache 命中率（按 token 数加权）。
   // 只在 msg.tokens.cached > 0 时计入（缺字段 / 0 都不算，避免 0.0% 噪声）。
   // 没数据 → null，UI 不显示 ⚡。

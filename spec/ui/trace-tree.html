@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<title>MonoDesk · Trace Tree Preview</title>
+<style>
+  /* ===== 对齐 src/styles.css 的设计 token（light + dark） ===== */
+  :root {
+    --bg: #ffffff;
+    --bg-panel: #f7f7f5;
+    --bg-hover: #f1f1ef;
+    --bg-code: #f6f6f4;
+    --border: #ececea;
+    --border-strong: #dcdcd9;
+    --text: #1b1b1f;
+    --text-muted: #6b6b74;
+    --text-faint: #9c9ca4;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, 0.08);
+    --thinking: #b45309;
+    --thinking-bg: rgba(180, 83, 9, 0.06);
+    --tool: #0369a1;
+    --tool-bg: rgba(3, 105, 161, 0.05);
+    --ok: #16a34a;
+    --ok-bg: rgba(22, 163, 74, 0.06);
+    --error: #dc2626;
+    --error-bg: rgba(220, 38, 38, 0.06);
+    --warn: #d97706;
+    --warn-bg: rgba(217, 119, 6, 0.06);
+    --caret: #4f46e5;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  html[data-theme="dark"] {
+    --bg: #0f0f12;
+    --bg-panel: #16161a;
+    --bg-hover: #1e1e24;
+    --bg-code: #17171c;
+    --border: #222228;
+    --border-strong: #2e2e36;
+    --text: #e7e7ea;
+    --text-muted: #9a9aa3;
+    --text-faint: #6b6b74;
+    --accent: #818cf8;
+    --accent-soft: rgba(129, 140, 248, 0.1);
+    --thinking: #f0a34a;
+    --thinking-bg: rgba(240, 163, 74, 0.08);
+    --tool: #4ab3e6;
+    --tool-bg: rgba(74, 179, 230, 0.07);
+    --ok: #4ade80;
+    --ok-bg: rgba(74, 222, 128, 0.07);
+    --error: #f87171;
+    --error-bg: rgba(248, 113, 113, 0.07);
+    --warn: #fbbf24;
+    --warn-bg: rgba(251, 191, 24, 0.07);
+    --caret: #818cf8;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  code, .mono, pre { font-family: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, monospace; }
+  .faint { color: var(--text-faint); }
+  .muted { color: var(--text-muted); }
+  .small { font-size: 11px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-faint); font-weight: 500; }
+
+  /* ===== Preview top bar (only in this demo) ===== */
+  .preview-bar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; gap: 16px; align-items: center;
+    padding: 10px 16px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .preview-bar .label { font-weight: 600; color: var(--text-muted); }
+  .preview-bar a {
+    color: var(--text); text-decoration: none;
+    padding: 4px 10px; border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+  .preview-bar a:hover { background: var(--bg-hover); }
+  .preview-bar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .preview-bar button {
+    background: transparent; color: var(--text); border: 1px solid var(--border);
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  .preview-bar button:hover { background: var(--bg-hover); }
+
+  /* ===== App layout ===== */
+  #app { display: flex; height: calc(100vh - 41px); overflow: hidden; }
+  aside#sidebar {
+    width: 240px; flex: 0 0 240px;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .sidebar-nav { padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--border); }
+  .nav-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 10px; border-radius: 5px;
+    cursor: pointer; user-select: none;
+    color: var(--text-muted); font-size: 13px;
+  }
+  .nav-row:hover { background: var(--bg-hover); color: var(--text); }
+  .nav-row.active { background: var(--bg-hover); color: var(--text); }
+  .nav-row svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .nav-row .badge {
+    margin-left: auto; font-size: 11px;
+    background: var(--accent-soft); color: var(--accent);
+    padding: 1px 6px; border-radius: 8px; font-weight: 600;
+    font-family: ui-monospace, monospace;
+  }
+  .sidebar-section-label {
+    padding: 14px 18px 6px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--text-faint); font-weight: 600;
+  }
+  .session-list { padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; }
+  .session-row {
+    padding: 7px 10px; border-radius: 5px;
+    cursor: pointer; user-select: none;
+    color: var(--text-muted); font-size: 13px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .session-row:hover { background: var(--bg-hover); color: var(--text); }
+  .session-row.active { background: var(--bg-hover); color: var(--text); }
+  .session-row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  .session-row .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  main {
+    flex: 1; overflow: auto; padding: 24px 32px;
+    background: var(--bg);
+  }
+  .conversation {
+    max-width: 760px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+
+  /* ===== Chat mock (just to show what context this drawer lives in) ===== */
+  .msg { display: flex; gap: 12px; }
+  .msg .avatar {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--bg-panel); flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: var(--text-muted); font-weight: 600;
+  }
+  .msg .body { flex: 1; min-width: 0; }
+  .msg .role {
+    font-size: 11px; text-transform: uppercase;
+    color: var(--text-faint); font-weight: 600;
+    letter-spacing: 0.04em; margin-bottom: 4px;
+  }
+  .msg.user .avatar { background: var(--accent-soft); color: var(--accent); }
+  .msg .text { font-size: 14px; line-height: 1.7; }
+  .msg .trace-btn {
+    margin-top: 8px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); padding: 4px 10px; border-radius: 4px;
+    cursor: pointer; font-size: 11px;
+    font-family: ui-monospace, monospace;
+  }
+  .msg .trace-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+  /* ===== Drawer scrim ===== */
+  .trace-scrim {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.32);
+    z-index: 50;
+  }
+
+  /* ===== Drawer (左右分栏) ===== */
+  .trace-drawer {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(1400px, 96vw);
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+    z-index: 60;
+    display: flex; flex-direction: column;
+    font-family: ui-monospace, "JetBrains Mono", monospace;
+    font-size: 12px;
+  }
+
+  /* drawer head */
+  .trace-drawer-head {
+    flex: 0 0 auto;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px;
+    background: var(--bg-panel);
+  }
+  .trace-drawer-head .label {
+    font-size: 10px; letter-spacing: 0.06em;
+    color: var(--text-faint); text-transform: uppercase;
+    font-weight: 600;
+  }
+  .trace-drawer-head .run-id {
+    font-size: 12px; color: var(--text);
+  }
+  .trace-drawer-head .run-id .prefix { color: var(--text-faint); }
+  .trace-drawer-head .summary {
+    color: var(--text-muted); font-size: 11px;
+    display: flex; gap: 12px;
+  }
+  .trace-drawer-head .toolbar {
+    margin-left: auto; display: flex; gap: 6px; align-items: center;
+  }
+  .trace-drawer-head .toolbar button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); padding: 4px 10px; border-radius: 4px;
+    cursor: pointer; font-size: 11px;
+    font-family: inherit;
+  }
+  .trace-drawer-head .toolbar button:hover { background: var(--bg-hover); color: var(--text); }
+  .trace-drawer-head .close {
+    background: transparent; border: none;
+    color: var(--text-muted); cursor: pointer; padding: 4px;
+    border-radius: 4px;
+  }
+  .trace-drawer-head .close:hover { background: var(--bg-hover); color: var(--text); }
+  .trace-drawer-head .close svg { width: 14px; height: 14px; }
+
+  /* drawer body — 2 columns */
+  .trace-body {
+    flex: 1; min-height: 0;
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    overflow: hidden;
+  }
+
+  /* ============ LEFT: tree ============ */
+  .trace-tree {
+    overflow: auto;
+    padding: 12px 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .trace-tree-section-label {
+    padding: 4px 16px 8px;
+    font-size: 10px; letter-spacing: 0.06em;
+    color: var(--text-faint); text-transform: uppercase; font-weight: 600;
+  }
+  /* Run header (always shown, not collapsible) */
+  .trace-run-head {
+    margin: 0 12px 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-panel);
+  }
+  .trace-run-head .row1 {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px;
+  }
+  .trace-run-head .run-status {
+    font-size: 10px; padding: 1px 6px; border-radius: 3px;
+    text-transform: uppercase; font-weight: 600;
+  }
+  .trace-run-head .run-status.ok { background: var(--ok-bg); color: var(--ok); }
+  .trace-run-head .run-id-full {
+    font-size: 11px; color: var(--text);
+  }
+  .trace-run-head .run-id-full .prefix { color: var(--text-faint); }
+  .trace-run-head .row2 {
+    font-size: 11px; color: var(--text-muted);
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .trace-run-head .user-text {
+    margin-top: 6px; font-size: 11px;
+    color: var(--text-muted); font-style: italic;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+
+  /* tree node */
+  .trace-node {
+    display: flex; flex-direction: column;
+  }
+  .trace-node-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px 5px 16px;
+    cursor: pointer; user-select: none;
+    font-size: 11px;
+  }
+  .trace-node-head:hover { background: var(--bg-hover); }
+  .trace-node-head.selected {
+    background: var(--accent-soft);
+    border-left: 2px solid var(--accent);
+    padding-left: 14px;
+  }
+  .trace-node-head .chev {
+    width: 12px; height: 12px; color: var(--text-faint);
+    flex-shrink: 0; transition: transform 0.15s;
+  }
+  .trace-node-head .chev.open { transform: rotate(90deg); }
+  .trace-node-head .chev.hidden { visibility: hidden; }
+  .trace-node-head .kind {
+    font-size: 9px; padding: 1px 5px; border-radius: 3px;
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; flex-shrink: 0;
+    min-width: 64px; text-align: center;
+  }
+  /* kind badge colors */
+  .trace-node-head .kind.bootstrap,
+  .trace-node-head .kind.loop,
+  .trace-node-head .kind.finalize {
+    background: var(--bg-panel); color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .trace-node-head .kind.turn {
+    background: rgba(99, 102, 241, 0.08); color: #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+  }
+  .trace-node-head .kind.reasoning {
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .trace-node-head .kind.act {
+    background: rgba(5, 150, 105, 0.08); color: #059669;
+    border: 1px solid rgba(5, 150, 105, 0.15);
+  }
+  .trace-node-head .kind.tool {
+    background: var(--tool-bg); color: var(--tool);
+  }
+  .trace-node-head .kind.compress {
+    background: var(--thinking-bg); color: var(--thinking);
+  }
+  html[data-theme="dark"] .trace-node-head .kind.turn { color: #a5b4fc; }
+  html[data-theme="dark"] .trace-node-head .kind.act { color: #34d399; }
+  .trace-node-head .name { color: var(--text); flex-shrink: 0; }
+  .trace-node-head .span-id {
+    color: var(--text-faint); font-size: 10px;
+    flex-shrink: 0;
+  }
+  .trace-node-head .duration { color: var(--text-muted); }
+  .trace-node-head .metric {
+    margin-left: auto; font-size: 10px;
+    color: var(--warn);
+  }
+  .trace-node-children {
+    border-left: 1px dashed var(--border);
+    margin-left: 22px;
+  }
+
+  /* ============ RIGHT: detail panel ============ */
+  .trace-detail {
+    overflow: auto;
+    padding: 16px 20px 40px;
+  }
+  .trace-detail-empty {
+    text-align: center; padding: 60px 20px;
+    color: var(--text-faint); font-size: 13px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .trace-detail-empty .emoji { font-size: 32px; opacity: 0.4; display: block; margin-bottom: 12px; }
+
+  .trace-detail-header {
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-panel);
+    margin-bottom: 18px;
+  }
+  .trace-detail-header .row1 {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 6px;
+  }
+  .trace-detail-header .kind {
+    font-size: 10px; padding: 2px 8px; border-radius: 3px;
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .trace-detail-header .kind.reasoning { background: var(--accent-soft); color: var(--accent); }
+  .trace-detail-header .kind.tool { background: var(--tool-bg); color: var(--tool); }
+  .trace-detail-header .name { font-size: 14px; color: var(--text); font-weight: 600; }
+  .trace-detail-header .span-id-full {
+    font-size: 11px; color: var(--text-faint);
+  }
+  .trace-detail-header .row2 {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    font-size: 11px; color: var(--text-muted);
+  }
+  .trace-detail-header .row2 .k { color: var(--text-faint); margin-right: 4px; }
+  .trace-detail-header .row2 .v { color: var(--text); }
+  .trace-detail-header .row2 .v.warn { color: var(--warn); }
+
+  .trace-detail-section {
+    margin-bottom: 22px;
+  }
+  .trace-detail-section-label {
+    font-size: 10px; letter-spacing: 0.06em;
+    color: var(--text-faint); text-transform: uppercase; font-weight: 600;
+    margin-bottom: 6px;
+    padding-left: 4px;
+  }
+  .trace-detail-key {
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    margin-bottom: 6px;
+    overflow: hidden;
+  }
+  .trace-detail-key > summary {
+    cursor: pointer; user-select: none;
+    padding: 6px 12px;
+    background: var(--bg-panel);
+    font-size: 11px;
+    display: flex; align-items: center; gap: 8px;
+    list-style: none;
+  }
+  .trace-detail-key > summary::-webkit-details-marker { display: none; }
+  .trace-detail-key > summary::before {
+    content: "▸"; color: var(--text-faint);
+    font-size: 9px; transition: transform 0.1s;
+    flex-shrink: 0;
+  }
+  .trace-detail-key[open] > summary::before { transform: rotate(90deg); }
+  .trace-detail-key > summary .otel-key {
+    color: var(--text); font-weight: 500;
+  }
+  .trace-detail-key > summary .otel-type {
+    color: var(--text-faint); font-size: 10px;
+  }
+  .trace-detail-key > summary .otel-quick {
+    color: var(--text-muted); margin-left: auto;
+    font-size: 10px;
+  }
+  .trace-detail-key > summary:hover { background: var(--bg-hover); }
+  .trace-detail-key .body {
+    padding: 8px 12px;
+    background: var(--bg-code);
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+  }
+  .trace-detail-key .body pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    color: var(--text); font-size: 11px; line-height: 1.5;
+  }
+  .trace-detail-key .body .simple-val {
+    color: var(--text); font-size: 11px;
+  }
+  .trace-detail-key .body .simple-val .num { color: var(--accent); }
+  .trace-detail-key .body .simple-val .str { color: var(--ok); }
+  .trace-detail-key .body .simple-val .bool { color: var(--warn); }
+
+  /* messages list inside gen_ai.request.messages */
+  .trace-msg {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 4px;
+    background: var(--bg);
+  }
+  .trace-msg > summary {
+    cursor: pointer; user-select: none;
+    padding: 4px 8px;
+    font-size: 10px;
+    list-style: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .trace-msg > summary::-webkit-details-marker { display: none; }
+  .trace-msg > summary::before {
+    content: "▸"; color: var(--text-faint); font-size: 8px;
+  }
+  .trace-msg[open] > summary::before { transform: rotate(90deg); }
+  .trace-msg .role-pill {
+    font-size: 9px; padding: 1px 6px; border-radius: 2px;
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--bg-panel); color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .trace-msg .role-pill.user { background: var(--accent-soft); color: var(--accent); border-color: rgba(99, 102, 241, 0.2); }
+  .trace-msg .role-pill.assistant { background: var(--ok-bg); color: var(--ok); border-color: rgba(22, 163, 74, 0.2); }
+  .trace-msg .role-pill.tool { background: var(--tool-bg); color: var(--tool); border-color: rgba(3, 105, 161, 0.15); }
+  .trace-msg .preview {
+    color: var(--text-muted); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+  }
+  .trace-msg .body {
+    padding: 6px 10px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-code);
+    font-size: 11px; line-height: 1.5;
+  }
+  .trace-msg .body pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    color: var(--text);
+  }
+
+  /* v1 incompatibility empty state */
+  .trace-detail-v1 {
+    text-align: center; padding: 80px 20px;
+    color: var(--text-faint); font-size: 13px;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .trace-detail-v1 .emoji { font-size: 36px; opacity: 0.4; display: block; margin-bottom: 16px; }
+  .trace-detail-v1 .heading { color: var(--text); font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+  .trace-detail-v1 .hint { font-size: 12px; color: var(--text-muted); margin-top: 12px; }
+  .trace-detail-v1 .hint code { background: var(--bg-panel); padding: 2px 6px; border-radius: 3px; }
+
+  /* ============ state showcase toggles ============ */
+  .state-toggle {
+    position: fixed; bottom: 16px; left: 16px;
+    background: var(--bg-panel); border: 1px solid var(--border);
+    padding: 8px 12px; border-radius: 6px;
+    font-size: 11px; z-index: 100;
+    display: flex; gap: 6px; align-items: center;
+  }
+  .state-toggle button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text-muted); padding: 3px 8px; border-radius: 3px;
+    cursor: pointer; font-size: 10px; font-family: inherit;
+  }
+  .state-toggle button:hover { background: var(--bg-hover); color: var(--text); }
+  .state-toggle button.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body data-theme="light">
+
+<div class="preview-bar">
+  <span class="label">trace-tree preview</span>
+  <a href="async-task.html">async-task</a>
+  <a href="model-switcher.html">model-switcher</a>
+  <a href="tasks-feature-redesign.html">tasks-feature-redesign</a>
+  <div class="right">
+    <button onclick="toggleTheme()">dark / light</button>
+  </div>
+</div>
+
+<!-- App shell (chat context — just to anchor the drawer) -->
+<div id="app">
+  <aside id="sidebar">
+    <div class="sidebar-nav">
+      <div class="nav-row">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h12M2 12h12"/></svg>
+        Chat <span class="badge">3</span>
+      </div>
+      <div class="nav-row"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3"/></svg>Skills</div>
+      <div class="nav-row"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="12" rx="2"/></svg>Tasks</div>
+    </div>
+    <div class="sidebar-section-label">Sessions</div>
+    <div class="session-list">
+      <div class="session-row"><span class="dot"></span><span class="label">default</span></div>
+      <div class="session-row active"><span class="dot"></span><span class="label">monodesk:mu2u3v</span></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="conversation">
+      <div class="msg user">
+        <div class="avatar">U</div>
+        <div class="body">
+          <div class="role">user</div>
+          <div class="text">帮我看看 /Users/jialiang/Workspace 下 MonoDesk 的最近 commit，按时间倒序列出来，每个 commit 给出 summary。</div>
+        </div>
+      </div>
+      <div class="msg">
+        <div class="avatar">A</div>
+        <div class="body">
+          <div class="role">assistant</div>
+          <div class="text">
+            最近 5 个 commit（按时间倒序）：
+            <br /><br />
+            <strong>edcba77</strong> Merge pull request #14 from halcyonway/fix/attachment-local-path<br />
+            <strong>7e01e5d</strong> chore(spec): 删代码 / spec 里的 user-voice meta 注释<br />
+            <strong>b4b36b0</strong> fix(attachment): wire frame 只传本地 path<br />
+            <strong>6659988</strong> fix(loop+debug): LLM 网络错不 abort run<br />
+            <strong>58a4b0b</strong> feat(tools): add read_doc universal reader + bash target display field
+          </div>
+          <button class="trace-btn">▣ trace t_063a2b1ce69c</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Drawer scrim -->
+<div class="trace-scrim"></div>
+
+<!-- Drawer -->
+<aside class="trace-drawer" id="traceDrawer">
+
+  <!-- drawer head -->
+  <div class="trace-drawer-head">
+    <span class="label">TRACE</span>
+    <span class="run-id"><span class="prefix">run_id=</span>t_063a2b1ce69c</span>
+    <span class="summary">
+      <span><span class="faint">status=</span>ok</span>
+      <span><span class="faint">dur=</span>4.2s</span>
+      <span><span class="faint">turns=</span>2</span>
+      <span><span class="faint">tok=</span>4624→46</span>
+      <span class="warn">⚡ 95.6%</span>
+    </span>
+    <div class="toolbar">
+      <button>Expand turns ▾</button>
+      <button>Collapse ▾</button>
+      <button class="close" title="close">
+        <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6">
+          <path d="M3 3l6 6M9 3l-6 6"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="trace-body">
+
+    <!-- ============== LEFT: tree ============== -->
+    <div class="trace-tree">
+
+      <div class="trace-tree-section-label">SPAN TREE</div>
+
+      <!-- Run header (always shown, not collapsible) -->
+      <div class="trace-run-head">
+        <div class="row1">
+          <span class="run-status ok">ok</span>
+          <span class="run-id-full"><span class="prefix">run=</span>t_063a2b1ce69c</span>
+        </div>
+        <div class="row2">
+          <span>2 turns</span>
+          <span>4.2s</span>
+          <span>tok 4624→46</span>
+          <span class="warn">⚡ 95.6%</span>
+        </div>
+        <div class="user-text">"帮我看看 /Users/jialiang/Workspace 下 MonoDesk 的最近 commit..."</div>
+      </div>
+
+      <!-- bootstrap (collapsed) -->
+      <div class="trace-node">
+        <div class="trace-node-head">
+          <span class="chev hidden"></span>
+          <span class="kind bootstrap">bootstrap</span>
+          <span class="name">bootstrap</span>
+          <span class="span-id">s_97ab12cd3401</span>
+          <span class="duration">12ms</span>
+        </div>
+      </div>
+
+      <!-- loop (collapsed) -->
+      <div class="trace-node">
+        <div class="trace-node-head">
+          <span class="chev"></span>
+          <span class="kind loop">loop</span>
+          <span class="name">loop</span>
+          <span class="span-id">s_97ab12cd3402</span>
+          <span class="duration">4.1s</span>
+        </div>
+      </div>
+
+      <!-- turn #1 (collapsed by default per spec) -->
+      <div class="trace-node">
+        <div class="trace-node-head" style="padding-left: 28px;">
+          <span class="chev open"></span>
+          <span class="kind turn">turn</span>
+          <span class="name">turn #1</span>
+          <span class="span-id">s_97ab12cd3410</span>
+          <span class="duration">2.4s</span>
+        </div>
+        <div class="trace-node-children">
+          <!-- reasoning (selected + open) — sibling of act -->
+          <div class="trace-node">
+            <div class="trace-node-head selected" style="padding-left: 28px;">
+              <span class="chev open"></span>
+              <span class="kind reasoning">reasoning</span>
+              <span class="name">reasoning:MiniMax-M2.7</span>
+              <span class="span-id">s_f7a2648c</span>
+              <span class="duration">2.4s</span>
+              <span class="metric">⚡ 95.6%</span>
+            </div>
+          </div>
+          <!-- act (sibling of reasoning; only emitted when tool_calls > 0) -->
+          <div class="trace-node">
+            <div class="trace-node-head" style="padding-left: 28px;">
+              <span class="chev open"></span>
+              <span class="kind act">act</span>
+              <span class="name">act:2_calls</span>
+              <span class="span-id">s_f7a26491</span>
+              <span class="duration">1.8s</span>
+            </div>
+            <div class="trace-node-children">
+              <!-- tool: bash (collapsed) -->
+              <div class="trace-node">
+                <div class="trace-node-head" style="padding-left: 28px;">
+                  <span class="chev"></span>
+                  <span class="kind tool">tool</span>
+                  <span class="name">tool:bash</span>
+                  <span class="span-id">s_f7a26495</span>
+                  <span class="duration">84ms</span>
+                </div>
+              </div>
+              <!-- tool: read_doc (collapsed) -->
+              <div class="trace-node">
+                <div class="trace-node-head" style="padding-left: 28px;">
+                  <span class="chev"></span>
+                  <span class="kind tool">tool</span>
+                  <span class="name">tool:read_doc</span>
+                  <span class="span-id">s_f7a264a8</span>
+                  <span class="duration">1.7s</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- compress L1 (sibling, collapsed) -->
+          <div class="trace-node">
+            <div class="trace-node-head" style="padding-left: 28px;">
+              <span class="chev"></span>
+              <span class="kind compress">compress</span>
+              <span class="name">compress:L1</span>
+              <span class="span-id">s_f7a264b2</span>
+              <span class="duration">3ms</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- turn #2 (collapsed by default) -->
+      <div class="trace-node">
+        <div class="trace-node-head" style="padding-left: 28px;">
+          <span class="chev"></span>
+          <span class="kind turn">turn</span>
+          <span class="name">turn #2</span>
+          <span class="span-id">s_97ab12cd3420</span>
+          <span class="duration">1.8s</span>
+        </div>
+      </div>
+
+      <!-- finalize (collapsed) -->
+      <div class="trace-node">
+        <div class="trace-node-head">
+          <span class="chev hidden"></span>
+          <span class="kind finalize">finalize</span>
+          <span class="name">finalize</span>
+          <span class="span-id">s_97ab12cd3499</span>
+          <span class="duration">50ms</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ============== RIGHT: detail panel ============== -->
+    <div class="trace-detail">
+
+      <!-- detail header -->
+      <div class="trace-detail-header">
+        <div class="row1">
+          <span class="kind reasoning">reasoning</span>
+          <span class="name">reasoning:MiniMax-M2.7</span>
+          <span class="span-id-full">s_f7a2648c</span>
+        </div>
+        <div class="row2">
+          <span><span class="k">gen_ai.client.time_to_first_token=</span><span class="v">230ms</span></span>
+          <span><span class="k">duration=</span><span class="v">2.4s</span></span>
+          <span><span class="k">tok=</span><span class="v">4624 → 46</span></span>
+          <span><span class="k">cache=</span><span class="v warn">95.6%</span></span>
+          <span><span class="k">status=</span><span class="v">ok</span></span>
+        </div>
+      </div>
+
+      <!-- INPUT section -->
+      <div class="trace-detail-section">
+        <div class="trace-detail-section-label">INPUT</div>
+
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">gen_ai.request.model</span>
+            <span class="otel-type">string</span>
+            <span class="otel-quick">MiniMax-M2.7</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val">"<span class="str">MiniMax-M2.7</span>"</div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key" open>
+          <summary>
+            <span class="otel-key">gen_ai.request.messages</span>
+            <span class="otel-type">list[12]</span>
+            <span class="otel-quick">12 msgs · 4,624 input_tokens</span>
+          </summary>
+          <div class="body">
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill">system</span>
+                <span class="preview">You are MonoX, a personal agent runtime. You serve one user across sessions...</span>
+              </summary>
+              <div class="body"><pre>You are MonoX, a personal agent runtime. You serve one user across sessions; your role grows with theirs over time.
+
+You run inside a sandboxed bash environment. Plan briefly, then execute. Use bash for all I/O. Use skill_load to fetch details of a skill before invoking it.
+
+## Async tasks (fork / poll / cancel)
+
+Long-running commands should run via `fork_task`, not directly via `bash` — the parent loop returns immediately, the task runs in the background. ...</pre></div>
+            </details>
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill user">user</span>
+                <span class="preview">帮我看看 /Users/jialiang/Workspace 下 MonoDesk 的最近 commit...</span>
+              </summary>
+              <div class="body"><pre>帮我看看 /Users/jialiang/Workspace 下 MonoDesk 的最近 commit，按时间倒序列出来，每个 commit 给出 summary。</pre></div>
+            </details>
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill assistant">assistant</span>
+                <span class="preview">(empty — turn started fresh)</span>
+              </summary>
+              <div class="body"><pre></pre></div>
+            </details>
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill tool">tool</span>
+                <span class="preview">tool:bash — stdout: "edcba77 Merge..."</span>
+              </summary>
+              <div class="body"><pre>name: "bash"
+args: { "command": "git log --oneline -5 --reverse --author-date-order MonoDesk/" }
+result.stdout: "edcba77 Merge pull request #14...\n7e01e5d chore(spec)...\n..."</pre></div>
+            </details>
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill">+ 8 more messages</span>
+                <span class="preview muted">(collapsed)</span>
+              </summary>
+              <div class="body"><pre>...</pre></div>
+            </details>
+          </div>
+        </details>
+
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">gen_ai.request.tool_specs</span>
+            <span class="otel-type">list[3]</span>
+            <span class="otel-quick">bash · read_doc · multimodal_understand</span>
+          </summary>
+          <div class="body">
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill tool">tool</span>
+                <span class="preview">bash — git log / file system ops</span>
+              </summary>
+              <div class="body"><pre>{
+  "type": "function",
+  "function": {
+    "name": "bash",
+    "description": "Execute a bash command in the sandbox",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string" },
+        "background": { "type": "boolean", "default": false },
+        "timeout_sec": { "type": "integer", "default": 30 }
+      },
+      "required": ["command"]
+    }
+  }
+}</pre></div>
+            </details>
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill tool">tool</span>
+                <span class="preview">read_doc — universal document reader</span>
+              </summary>
+              <div class="body"><pre>{
+  "type": "function",
+  "function": {
+    "name": "read_doc",
+    "description": "Read any document (PDF/markdown/text/image) and extract text content",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "absolute path" },
+        "max_chars": { "type": "integer", "default": 8000 }
+      },
+      "required": ["path"]
+    }
+  }
+}</pre></div>
+            </details>
+            <details class="trace-msg">
+              <summary>
+                <span class="role-pill tool">tool</span>
+                <span class="preview">multimodal_understand — image+text understanding</span>
+              </summary>
+              <div class="body"><pre>...</pre></div>
+            </details>
+          </div>
+        </details>
+      </div>
+
+      <!-- OUTPUT section -->
+      <div class="trace-detail-section">
+        <div class="trace-detail-section-label">OUTPUT</div>
+
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">gen_ai.response.model</span>
+            <span class="otel-type">string</span>
+            <span class="otel-quick">MiniMax-M2.7</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val">"<span class="str">MiniMax-M2.7</span>"</div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">gen_ai.response.text</span>
+            <span class="otel-type">string</span>
+            <span class="otel-quick">46 chars</span>
+          </summary>
+          <div class="body">
+            <pre>最近 5 个 commit（按时间倒序）：...</pre>
+          </div>
+        </details>
+
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">gen_ai.response.finish_reasons</span>
+            <span class="otel-type">string</span>
+            <span class="otel-quick">stop</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val">"<span class="str">stop</span>"</div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key" open>
+          <summary>
+            <span class="otel-key">gen_ai.usage.input_tokens</span>
+            <span class="otel-type">int</span>
+            <span class="otel-quick">4,624</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val"><span class="num">4624</span></div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key" open>
+          <summary>
+            <span class="otel-key">gen_ai.usage.output_tokens</span>
+            <span class="otel-type">int</span>
+            <span class="otel-quick">46</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val"><span class="num">46</span></div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key" open>
+          <summary>
+            <span class="otel-key">gen_ai.usage.cached_tokens</span>
+            <span class="otel-type">int</span>
+            <span class="otel-quick warn">4,421 (95.6%)</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val"><span class="num">4421</span></div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">gen_ai.client.operation.duration</span>
+            <span class="otel-type">int (ms)</span>
+            <span class="otel-quick">2,400</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val"><span class="num">2400</span> ms</div>
+          </div>
+        </details>
+
+        <details class="trace-detail-key" open>
+          <summary>
+            <span class="otel-key">gen_ai.client.time_to_first_token</span>
+            <span class="otel-type">int (ms)</span>
+            <span class="otel-quick warn">230</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val"><span class="num">230</span> ms <span class="muted">(新采集)</span></div>
+          </div>
+        </details>
+      </div>
+
+      <!-- ERRORS section (empty since status=ok) -->
+      <div class="trace-detail-section">
+        <div class="trace-detail-section-label">ERRORS</div>
+        <div class="trace-detail-empty" style="padding: 20px;">
+          <span class="muted">none</span>
+        </div>
+      </div>
+
+      <!-- META section -->
+      <div class="trace-detail-section">
+        <div class="trace-detail-section-label">META</div>
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">service.name</span>
+            <span class="otel-type">string</span>
+            <span class="otel-quick">monox</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val">"<span class="str">monox</span>"</div>
+          </div>
+        </details>
+        <details class="trace-detail-key">
+          <summary>
+            <span class="otel-key">session.id</span>
+            <span class="otel-type">string</span>
+            <span class="otel-quick">monodesk:mu2u3v8x</span>
+          </summary>
+          <div class="body">
+            <div class="simple-val">"<span class="str">monodesk:mu2u3v8x</span>"</div>
+          </div>
+        </details>
+      </div>
+
+    </div>
+  </div>
+</aside>
+
+<!-- Empty state — v1 incompatibility (not currently shown; included for completeness) -->
+<div id="v1State" style="display: none;">
+  <aside class="trace-drawer" style="z-index: 61;">
+    <div class="trace-drawer-head">
+      <span class="label">TRACE</span>
+      <span class="run-id"><span class="prefix">run_id=</span>t_011ab8c91f44</span>
+      <span class="summary"><span class="faint">status=</span>ok</span>
+      <div class="toolbar">
+        <button class="close">✕</button>
+      </div>
+    </div>
+    <div class="trace-body" style="grid-template-columns: 1fr;">
+      <div class="trace-detail">
+        <div class="trace-detail-v1">
+          <span class="emoji">📦</span>
+          <div class="heading">该 trace 旧版不可读</div>
+          <div class="muted">schema_version=1 — MonoDesk 已升级到 OTel 语义 (v2)，旧版 traces 不能重新渲染。</div>
+          <div class="hint">旧 trace 已自动归档到 <code>~/.monox/traces/&lt;sk&gt;.traces.v1.jsonl</code>，需要查阅请用 <code>grep</code> 或 JSON viewer 打开该文件。</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- State toggle for demo -->
+<div class="state-toggle">
+  <span class="small">state:</span>
+  <button class="active" onclick="showState('main')">main (reasoning 选中)</button>
+  <button onclick="showState('v1')">v1 不兼容空态</button>
+</div>
+
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const cur = html.getAttribute('data-theme');
+    html.setAttribute('data-theme', cur === 'dark' ? 'light' : 'dark');
+  }
+  function showState(s) {
+    const main = document.getElementById('traceDrawer');
+    const v1 = document.getElementById('v1State');
+    if (s === 'main') {
+      main.style.display = '';
+      v1.style.display = 'none';
+    } else {
+      main.style.display = 'none';
+      v1.style.display = '';
+    }
+    document.querySelectorAll('.state-toggle button').forEach((b, i) => {
+      b.classList.toggle('active', (s === 'main' && i === 0) || (s === 'v1' && i === 1));
+    });
+  }
+</script>
+
+</body>
+</html>

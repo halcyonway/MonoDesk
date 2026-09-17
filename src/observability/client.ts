@@ -30,7 +30,11 @@ export class TraceClient {
   }
 
   private key(sessionKey: string, runId?: string): string {
-    return runId ? `${sessionKey}:${runId}` : `${sessionKey}:*`;
+    // cache key 加 schema_version=v2 后缀：v1 / v2 不可混存（list/get 都按
+    // 同一 key 复用就坏了），而且 v1 数据后端归档后再不会来，加后缀让老 cache
+    // 自然失效。
+    const v = "v2";
+    return runId ? `${sessionKey}:${runId}:${v}` : `${sessionKey}:*:${v}`;
   }
 
   async getRun(sessionKey: string, runId: string): Promise<TraceRun> {
@@ -44,6 +48,11 @@ export class TraceClient {
       throw new Error(`trace fetch ${resp.status}: ${text || resp.statusText}`);
     }
     const run = (await resp.json()) as TraceRun;
+    // v1 协议后端已归档，理论上不会到这里；防御性 reject 让 UI 端拿到的
+    // 都是 v2，避免 kind / schema_version 字段缺失导致渲染崩。
+    if ((run.schema_version ?? 1) < 2) {
+      throw new Error(`trace run ${runId} is legacy v1; not renderable`);
+    }
     this.cache.set(cacheKey, run);
     return run;
   }
@@ -59,8 +68,11 @@ export class TraceClient {
       throw new Error(`trace recent fetch ${resp.status}: ${text || resp.statusText}`);
     }
     const body = (await resp.json()) as { runs: TraceRunSummary[] };
-    this.recentCache.set(cacheKey, body.runs);
-    return body.runs;
+    // 过滤 v1：MonoX 启动时全 v1 文件已归档，理论上 list 不会带；但混合
+    // 文件残留或迁移期还是可能见到，UI 不渲染 v1。
+    const v2only = body.runs.filter((r) => (r.schema_version ?? 1) >= 2);
+    this.recentCache.set(cacheKey, v2only);
+    return v2only;
   }
 
   invalidate(sessionKey: string): void {

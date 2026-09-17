@@ -21,14 +21,23 @@ export interface ToolResultData {
 }
 
 // 可观测性：Run / Turn / Span 节点，对应 MonoX core/observability/types.py 的 dict 形态。
+// v2 协议（schema_version=2）：kind 扩到 8 个；Run 多 spans[] 字段（bootstrap / loop /
+// finalize）；attributes 走 OTel 风格扁平 key（gen_ai.* / tool.* / loop.* / error.*）。
+export type SpanKind =
+  | "bootstrap" | "loop" | "finalize"   // phase spans（每 run 固定各 1 个）
+  | "turn"                              // logical container
+  | "reasoning" | "act" | "compress" | "tool";  // work spans
+
 export interface TraceSpan {
   span_id: string;
   parent_id: string | null;
-  kind: "reasoning" | "act" | "compress";
+  kind: SpanKind;
   name: string;
   start_ts: number;
   end_ts: number | null;
   status: "ok" | "error" | "cancelled";
+  // OTel 风格扁平 attr：tool.call.arguments / tool.result 是 JSON 字符串；
+  // 嵌套 dict 由 UI 端 JSON.parse 后渲染。
   attributes: Record<string, any>;
 }
 
@@ -46,6 +55,10 @@ export interface TraceRun {
   start_ts: number;
   end_ts: number | null;
   status: "running" | "ok" | "error" | "cancelled";
+  // v2 协议：list 必带。v1 数据归档后不会出现
+  schema_version: number;
+  // run-level spans：bootstrap / loop / finalize
+  spans: TraceSpan[];
   turns: TraceTurn[];
 }
 
@@ -57,6 +70,7 @@ export interface TraceRunSummary {
   end_ts: number | null;
   status: string;
   turn_count: number;
+  schema_version: number;
 }
 
 export interface Envelope<T = Record<string, unknown>> {

@@ -29,6 +29,9 @@ import {
 import {
   DEFAULT_SESSION_KEY,
   MAX_SESSIONS,
+  addTombstone,
+  isTombstoned,
+  loadActiveTombstones,
   loadActiveSession,
   loadHistories,
   loadSessions,
@@ -127,11 +130,17 @@ const EMPTY_SESSION_STATE = {
   availableProviders: [] as string[],
 } satisfies Omit<SessionState, never>;
 
-function loadSessionStates(): Record<string, typeof EMPTY_SESSION_STATE> {
-  // 把 localStorage 的历史灌进 SessionState（其它字段用 default）。
+function loadSessionStates(
+  knownSessions: SessionItem[]
+): Record<string, typeof EMPTY_SESSION_STATE> {
+  // 关键：只加载 sidebar 里存在的 session 的 history。localStorage 里如果残留
+  // 已删除 session 的 history（晚到 WS 复活 / useEffect 没赶上 / 旧版本写入），
+  // 这里直接丢弃 —— 下次 useEffect saveHistories 时也会一并清掉。
+  const known = new Set(knownSessions.map((s) => s.key));
   const histories = loadHistories();
   const out: Record<string, typeof EMPTY_SESSION_STATE> = {};
   for (const [k, msgs] of Object.entries(histories)) {
+    if (!known.has(k)) continue; // 丢弃孤儿 history
     out[k] = { ...EMPTY_SESSION_STATE, msgs: msgs as Msg[] };
   }
   return out;
@@ -151,8 +160,12 @@ export default function App() {
   // 全局一份（跨 session 共享选择），下一个 user_input 的 meta 带给 Runtime。
   const [selectedProvider, setSelectedProvider] = useState("");
   // 所有会话运行时状态都在这张 Map 里。视图状态完全 derive。
+  // 第一帧初始化时，把 sidebar 已知的 session key 集合传进去，
+  // 避免从 monodesk.histories 读出孤儿数据（已删 session 的 history
+  // 仍然可能残留在 localStorage，例如晚到 WS 事件曾复活过 sessionStates
+  // 然后被 useEffect 写回）。
   const [sessionStates, setSessionStates] = useState<Record<string, SessionState>>(
-    () => loadSessionStates()
+    () => loadSessionStates(loadSessions())
   );
 
   // Floating agent panel：选中片段 → 弹窗 → 起新 fork session
@@ -210,6 +223,10 @@ export default function App() {
   // 否则写进了 "default" entry 而当前视图是别的会话时永远看不到。
   const [serverProviders, setServerProviders] = useState<string[]>([]);
   const [helloModel, setHelloModel] = useState("");
+  // Tombstone set：已删除 session 的 key 集合。WS 事件里带这些 key 的
+  // 一律 drop，避免被晚到事件复活到 sessionStates 里。
+  // 用 ref 而不是 state：不需要触发重渲染，handleEvent 里查一下就够。
+  const tombstonesRef = useRef<Set<string>>(loadActiveTombstones());
   const handleEvent = useCallback(
     (ev: MonoDeskEvent) => {
       if (ev.type === "hello") {
@@ -221,6 +238,12 @@ export default function App() {
       if (ev.type.startsWith("async_task_")) {
         tasksStore.ingest(ev);
         return; // async 帧不进主 Chat 流的 engine
+      }
+      // Tombstone check：删除后晚到的 WS 帧直接丢弃，
+      // 避免 sessionStates 复活该 session（再 useEffect save 又写回 localStorage）。
+      const sk = (ev.data as { session_key?: string }).session_key;
+      if (sk && tombstonesRef.current.has(sk)) {
+        return; // 已删除 session 的事件，不进 engine
       }
       engine.dispatch(ev);
     },
@@ -401,6 +424,9 @@ export default function App() {
       const { [key]: _drop, ...rest } = s;
       return rest;
     });
+    // 删完还要 tombstone，让晚到的 WS event（agent 还在回流旧 session_key
+    // 的 token / final）不会再次写入 sessionStates 复活这个 session。
+    addTombstone(key);
     if (key === session) switchSession(DEFAULT_SESSION_KEY);
   };
 

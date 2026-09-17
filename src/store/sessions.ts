@@ -27,6 +27,69 @@ const KEY_SESSIONS = "monodesk.sessions";
 const KEY_ACTIVE = "monodesk.activeSession";
 const KEY_COUNTER = "monodesk.chatCounter";
 const KEY_HISTORIES = "monodesk.histories";
+const KEY_TOMBSTONES = "monodesk.tombstones";
+
+// Tombstone：删除的 session 在本地存一个 tombstone，避免：
+// 1) Late WS event（agent 还在回流旧 session_key 的 token / final）
+//    再次写入 sessionStates，"复活" 已删除 session
+// 2) 下次 loadHistories 时再次被读回（即便 monodesk.histories 已清，
+//    WS 复活后 useEffect 又写回 localStorage）
+//
+// Tombstone 格式：[{ key: string, ts: number }, ...]
+// 保留 24 小时后自动清，避免长期累积（同一 key 重新使用几乎不可能在 24h 内发生）。
+interface Tombstone {
+  key: string;
+  ts: number;
+}
+
+const TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function isTombstoned(key: string): boolean {
+  const stones = loadTombstones();
+  return stones.some((s) => s.key === key);
+}
+
+export function addTombstone(key: string): void {
+  const stones = loadTombstones();
+  // 去重：同一 key 多次删除只留最新 ts
+  const filtered = stones.filter((s) => s.key !== key);
+  filtered.push({ key, ts: Date.now() });
+  saveTombstones(filtered);
+}
+
+function loadTombstones(): Tombstone[] {
+  try {
+    const raw = localStorage.getItem(KEY_TOMBSTONES);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    // 顺手清过期（24h TTL）
+    const now = Date.now();
+    const fresh = parsed.filter(
+      (s: Tombstone) => now - s.ts < TOMBSTONE_TTL_MS && typeof s.key === "string"
+    );
+    return fresh;
+  } catch {
+    return [];
+  }
+}
+
+function saveTombstones(stones: Tombstone[]): void {
+  try {
+    localStorage.setItem(KEY_TOMBSTONES, JSON.stringify(stones));
+  } catch {
+    // 静默
+  }
+}
+
+// 启动时清理：过期 tombstone 写回 localStorage；
+// caller 可以同时拿到当前生效的 tombstone key 集合，用于 dispatch drop。
+export function loadActiveTombstones(): Set<string> {
+  const stones = loadTombstones();
+  // loadTombstones 已经过滤过 TTL；如果有被淘汰的会重新写一遍更小的版本
+  saveTombstones(stones);
+  return new Set(stones.map((s) => s.key));
+}
 
 const DEFAULT_SESSION: SessionItem = { key: DEFAULT_SESSION_KEY, title: "Default" };
 

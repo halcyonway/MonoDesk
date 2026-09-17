@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TraceClient } from "./client";
 import type { TraceRun, TraceRunSummary } from "../ws/protocol";
 
+// v2 fixture：TraceClient 在 getRun / getRecent 入口都校验 schema_version，
+// 缺这个字段会直接抛 "is legacy v1; not renderable"，导致测试一开始就走到
+// error 分支看不到期望的 cache / fetch 行为。SAMPLE_RUN 故意只填 v2 必填字段
+// （spans/turns 留空），让单测 focus 在 client 自身逻辑，不夹带 v2 trace 形状假设。
 const SAMPLE_RUN: TraceRun = {
   run_id: "t_abc",
   session_key: "default",
@@ -11,6 +15,8 @@ const SAMPLE_RUN: TraceRun = {
   start_ts: 1.0,
   end_ts: 1.5,
   status: "ok",
+  schema_version: 2,
+  spans: [],
   turns: [],
 };
 
@@ -22,6 +28,7 @@ const SAMPLE_SUMMARY: TraceRunSummary = {
   end_ts: 1.5,
   status: "ok",
   turn_count: 1,
+  schema_version: 2,
 };
 
 // 给 fetchMock 一个明确签名，让 mock.calls[0][0] 类型是 string 而不是 never。

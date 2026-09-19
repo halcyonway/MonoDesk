@@ -458,6 +458,94 @@ export function Conversation({
     return () => engine.bindScroll(sessionKey, null);
   }, [engine, sessionKey]);
 
+  // evidence chain ref chip → popover 触发（spec §3.5）。
+  // delegation 监听 #conversation-wrap：mouseenter/leave/focusin/out + click。
+  // 不用全局 document —— Conversation 是 ref chip 的唯一宿主，
+  // 缩小到容器监听便于 cleanup + 不污染其他组件。
+  // popover 位置：在 chip 下方 4px，靠 chip.getBoundingClientRect() 算到
+  // wrap 的相对坐标 + position: absolute。hide 时清 inline style + 移除 .visible。
+  useEffect(() => {
+    const wrap = scrollRef.current?.parentElement; // #conversation-wrap
+    if (!wrap) return;
+
+    const findChip = (target: EventTarget | null): HTMLElement | null => {
+      const el = target as Element | null;
+      return el && el.closest ? el.closest(".ref-chip") : null;
+    };
+
+    const showPopover = (chip: HTMLElement) => {
+      const pop = wrap.querySelector(
+        `.ref-popover[data-ref-id="${chip.getAttribute("data-ref-id")}"]`,
+      ) as HTMLElement | null;
+      if (!pop) return;
+      const c = chip.getBoundingClientRect();
+      const w = wrap.getBoundingClientRect();
+      // 在 chip 下方 4px；左对齐到 chip，限制在 wrap 范围内
+      const left = Math.max(0, Math.min(c.left - w.left, w.width - pop.offsetWidth - 4));
+      pop.style.top = `${c.bottom - w.top + 4}px`;
+      pop.style.left = `${left}px`;
+      pop.classList.add("visible");
+    };
+    const hidePopover = (chip: HTMLElement | null) => {
+      if (!chip) return;
+      const pop = wrap.querySelector(
+        `.ref-popover[data-ref-id="${chip.getAttribute("data-ref-id")}"]`,
+      ) as HTMLElement | null;
+      if (!pop) return;
+      pop.classList.remove("visible");
+      pop.style.top = "";
+      pop.style.left = "";
+    };
+    const togglePopover = (chip: HTMLElement) => {
+      const pop = wrap.querySelector(
+        `.ref-popover[data-ref-id="${chip.getAttribute("data-ref-id")}"]`,
+      ) as HTMLElement | null;
+      if (!pop) return;
+      if (pop.classList.contains("visible")) hidePopover(chip);
+      else showPopover(chip);
+    };
+
+    const onMouseEnter = (e: Event) => {
+      const chip = findChip(e.target);
+      if (chip) showPopover(chip);
+    };
+    const onMouseLeave = (e: Event) => {
+      // 只在真正离开 chip 时收起 —— mouseleave 在子节点移动时不冒泡
+      // 触发（closest 找不到 chip），自然不会误收起。
+      const chip = findChip(e.target);
+      if (chip) hidePopover(chip);
+    };
+    const onClick = (e: Event) => {
+      const chip = findChip(e.target);
+      // 移动端 / 触屏 → 点击展开；桌面 hover 已显示 → 点击可固定 / 取消固定
+      // 简化：始终 toggle（hover 离开前不会自动收起已 toggle 的 popover，
+      // 但下个 chip hover 进来会重定位覆盖；可接受）。
+      if (chip) togglePopover(chip);
+    };
+    const onFocusIn = (e: Event) => {
+      const chip = findChip(e.target);
+      if (chip) showPopover(chip);
+    };
+    const onFocusOut = (e: Event) => {
+      const chip = findChip(e.target);
+      if (chip) hidePopover(chip);
+    };
+
+    // capture phase：mouseenter/leave 不冒泡，必须 capture 才能可靠监听
+    wrap.addEventListener("mouseenter", onMouseEnter, true);
+    wrap.addEventListener("mouseleave", onMouseLeave, true);
+    wrap.addEventListener("focusin", onFocusIn);
+    wrap.addEventListener("focusout", onFocusOut);
+    wrap.addEventListener("click", onClick);
+    return () => {
+      wrap.removeEventListener("mouseenter", onMouseEnter, true);
+      wrap.removeEventListener("mouseleave", onMouseLeave, true);
+      wrap.removeEventListener("focusin", onFocusIn);
+      wrap.removeEventListener("focusout", onFocusOut);
+      wrap.removeEventListener("click", onClick);
+    };
+  }, []);
+
   // 自动锚定底部并预留 composer 高度的呼吸空间（豆包式：回复和输入框之间留大片空白）。
   // 触发：每次 msgs 引用变化都跑 —— 这同时覆盖了三种场景：
   //   1) 启动加载历史（loadHistories 一次性把内容塞进 state）→ 自动滚到底

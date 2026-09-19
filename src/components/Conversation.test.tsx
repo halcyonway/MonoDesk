@@ -480,3 +480,161 @@ describe("Conversation ToolBlock error body", () => {
     expect(container.querySelector(".t-exit")?.textContent).toBe("exit -1");
   });
 });
+
+describe("Conversation evidence chain ref chip + popover", () => {
+  // 协议见 spec/requirements/evidence-chain.md。freeze 阶段 text 字段
+  // 已经 frozen → TextStream 走 dangerouslySetInnerHTML 静态渲染；
+  // 渲染结果里 ref token 已被替换成 .ref-chip + .ref-popover HTML。
+  function assistantWithText(text: string): Msg {
+    return {
+      id: "a-ref",
+      role: "assistant",
+      children: [{ id: "c-ref", kind: "text", text }],
+    };
+  }
+
+  it("renders ref chip + popover when assistant text contains [[ref]] token", () => {
+    const engine = makeEngine();
+    const text = `观点 [1] 引用了某来源 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = container.querySelector(".ref-chip");
+    expect(chip).toBeTruthy();
+    expect(chip?.getAttribute("data-ref-id")).toBe("1");
+    expect(chip?.getAttribute("data-ref-type")).toBe("link");
+    const popover = container.querySelector(".ref-popover");
+    expect(popover).toBeTruthy();
+    // 初始不可见：没有 .visible 类
+    expect(popover?.classList.contains("visible")).toBe(false);
+    // raw token 已经被替换走
+    expect(container.textContent).not.toContain("[[ref");
+  });
+
+  it("popover 初始 display 来自 CSS（默认 hidden，JS hover 才会 .visible）", () => {
+    // 不直接读 computed style（jsdom 对 absolute 定位不真实计算），
+    // 而是断言 popover 的 .visible 类**不在**初始 class list 里。
+    const engine = makeEngine();
+    const text = `观点 [[ref id=1 type=memory key="k" snippet="s"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const popover = container.querySelector(".ref-popover");
+    expect(popover?.classList.contains("visible")).toBe(false);
+  });
+
+  it("mouseenter on chip toggles popover visible (delegation on #conversation-wrap)", () => {
+    // 监听挂在 #conversation-wrap 上（不是 document 全局），
+    // 用 fireEvent 在 chip 元素上派 mouseenter → capture phase 触发监听。
+    const engine = makeEngine();
+    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = container.querySelector(".ref-chip") as HTMLElement;
+    fireEvent.mouseEnter(chip);
+    const popover = container.querySelector(".ref-popover");
+    expect(popover?.classList.contains("visible")).toBe(true);
+  });
+
+  it("mouseleave on chip hides popover (removes .visible)", () => {
+    const engine = makeEngine();
+    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = container.querySelector(".ref-chip") as HTMLElement;
+    fireEvent.mouseEnter(chip);
+    expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(true);
+    fireEvent.mouseLeave(chip);
+    expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(false);
+  });
+
+  it("click on chip toggles popover (mobile / tap)", () => {
+    const engine = makeEngine();
+    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = container.querySelector(".ref-chip") as HTMLElement;
+    fireEvent.click(chip);
+    expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(true);
+    fireEvent.click(chip);
+    expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(false);
+  });
+
+  it("unmount removes popover state (cleanup)", () => {
+    // ensure no leaked listeners across mount/unmount — verify by remount and hover.
+    const engine = makeEngine();
+    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const first = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    first.unmount();
+    const second = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = second.container.querySelector(".ref-chip") as HTMLElement;
+    fireEvent.mouseEnter(chip);
+    expect(second.container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(true);
+  });
+
+  it("multiple refs in same msg render multiple chip/popover pairs", () => {
+    const engine = makeEngine();
+    const text =
+      `A [[ref id=1 type=link url="https://a" title="A"]] B [[ref id=2 type=memory key="k" snippet="s"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelectorAll(".ref-chip").length).toBe(2);
+    expect(container.querySelectorAll(".ref-popover").length).toBe(2);
+  });
+});

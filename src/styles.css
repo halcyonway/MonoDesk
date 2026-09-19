@@ -454,6 +454,17 @@ html[data-theme="dark"] #conversation::-webkit-scrollbar-thumb:hover { backgroun
 .tool-result pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .tool-result .stderr { color: var(--error); }
 .tool-result .trunc { color: var(--text-faint); font-size: 11px; margin-top: 6px; }
+/* error / timeout / cancelled 时 body 顶部的 reason 摘要 + 底部 exit_code：
+   让用户点开 body 立刻看到「为什么 fail」。stderr 空时不补任何文字（exit_code
+   已经足够说明 silent exit 语义）。 */
+.tool-result .t-reason {
+  color: var(--text-muted); font-size: 11.5px; margin-bottom: 6px;
+  font-style: italic;
+}
+.tool-result .t-exit {
+  color: var(--text-faint); font-size: 11px; margin-top: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
 
 /* metric footnote + error */
 .metric-note {

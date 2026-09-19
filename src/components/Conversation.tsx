@@ -221,11 +221,25 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
       {!running && r && (
         <div className="block-body">
           <div className="tool-result">
+            {/* 顶部 reason 行：让用户点开 body 立刻知道为什么 error / timeout /
+                cancelled，不用滚动看 stderr。ok 状态不显示（无 reason 可言）。 */}
+            {r.status === "timeout" && (
+              <div className="t-reason">
+                timeout after {((child.latencyMs ?? 0) / 1000).toFixed(2)}s
+              </div>
+            )}
+            {r.status === "cancelled" && (
+              <div className="t-reason">cancelled by user</div>
+            )}
             {(r.stdout || "").length > 0 && <pre>{r.stdout}</pre>}
-            {r.status === "error" && (r.stderr || "").length > 0 && (
+            {r.status !== "cancelled" && (r.stderr || "").length > 0 && (
               <pre className="stderr">{r.stderr}</pre>
             )}
             {r.truncated && <div className="trunc">… truncated (budget: {r.budget_id || "-"})</div>}
+            {/* exit_code 永远显示：不论 ok / error / timeout / cancelled，让
+                用户看到「为什么」的根因信号（124=timeout / 1=命令失败 /
+                127=command not found / -1=sandbox 异常）。 */}
+            <div className="t-exit">exit {r.exit_code}</div>
           </div>
         </div>
       )}

@@ -2252,3 +2252,263 @@ html[data-theme="dark"] .selection-fab:hover {
     max-height: calc(100vh - 16px);
   }
 }
+
+/* ============ evidence chain ref chip + popover ============ */
+/* 协议：src/stream/ref-parser.ts + spec/requirements/evidence-chain.md。
+   ref token [[ref id=N type=... ...]] 在 freeze 时由 renderMarkdown 替换成
+   .ref-chip + .ref-popover。streaming 阶段 ref token 当 raw 字符显示。
+   link type chip 渲染成 <a>（直接跳转），其它 type 是 <span>（hover/click 弹
+   popover）。popover 形态按 type 分：link=preview card（favicon + domain +
+   Open 按钮 + title + desc）；memory/snippet/tool=紧凑 key=value 布局带
+   type icon。 */
+
+/* Chip 是 inline 元素 —— 跟文本混排时不会被块边界切走。
+   inline-flex 失效时退到 inline（display: inline），不影响 inline 排列。
+   position: relative 让 absolute 定位的 popover 锚到 chip 自身。
+   v5：完整字段 + emoji icon。font-size 9.5 → 11（完整字段需要更大字号）；
+   font-family mono → sans（path/URL 才用 mono，完整字段是中文/英文）；padding 0.5/4 → 2/7；
+   top offset -0.3em → -0.2em（字号放大 offset 收紧）。 */
+.ref-chip {
+  display: inline;
+  vertical-align: baseline;
+  padding: 2px 7px;
+  margin: 0 1px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-style: normal;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none;
+  position: relative;
+  /* 抬到 superscript 位置，跟行内文字 baseline 对齐（参考 Wikipedia footnote） */
+  top: -0.2em;
+}
+.ref-chip:hover,
+.ref-chip:focus {
+  background: var(--accent);
+  color: var(--bg);
+  outline: none;
+}
+/* link type chip 包成 <a>，要确保不显示下划线 + 颜色跟 span chip 一致 */
+a.ref-chip {
+  color: var(--accent);
+}
+a.ref-chip:hover,
+a.ref-chip:focus {
+  color: var(--bg);
+  text-decoration: none;
+}
+/* v5 emoji icon：inline emoji 字符 + 字体回退链（Apple Color Emoji /
+   Segoe UI Emoji / Noto Color Emoji / EmojiOne Color / sans-serif）。
+   完全无 emoji 字体的环境会渲染空字形（chip 文字仍可见）。 */
+.ref-icon-emoji {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-right: 3px;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color", sans-serif;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.9;
+}
+.ref-chip:hover .ref-icon-emoji,
+.ref-chip:focus .ref-icon-emoji {
+  opacity: 1;
+}
+.ref-chip .ref-num {
+  font-weight: 500;
+  font-style: normal;
+}
+
+/* type-specific chip 配色：保持 accent 主色，但 hover 时 type-icon
+   跟数字保持可见对比。type 颜色只用在 icon stroke 上不显眼，主要靠
+   popover 形态区分（link=preview card / 其它=generic layout）。 */
+.ref-chip[data-ref-type="link"] {
+  --chip-tint: var(--accent);
+}
+.ref-chip[data-ref-type="memory"] {
+  --chip-tint: #b48bf2;
+}
+.ref-chip[data-ref-type="snippet"] {
+  --chip-tint: #5fb878;
+}
+.ref-chip[data-ref-type="tool"] {
+  --chip-tint: #e89944;
+}
+
+/* popover：spec/ui/ref-chip-popover-v5.html（v5 简化：去掉 type badge section +
+   chip 已展示的 Title section，只保留 URL / snippet / kv grid）。宽度 340 → 300
+   收紧，padding 8 → 7。popover 顶部有等腰三角箭头（::before），JS 控制 left
+   居中指向 chip。 */
+.ref-popover {
+  display: none;
+  position: absolute;
+  z-index: 100;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  overflow: hidden;
+}
+.ref-popover.visible { display: block; }
+
+/* 顶部三角箭头 */
+.ref-popover::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  width: 11px;
+  height: 6px;
+  background: var(--bg-panel);
+  clip-path: polygon(0 6px, 0 1px, 50% 0, 100% 1px, 100% 6px, 50% calc(100% - 1px));
+  z-index: 1;
+}
+.ref-popover.arrow-center::before {
+  left: 50%;
+  transform: translateX(-5.5px);
+}
+
+/* section 行：label + value，底部分隔线。v5 padding 8 → 7 收紧。 */
+.ref-pop-section {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ref-pop-section:last-child { border-bottom: none; }
+.ref-pop-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.ref-pop-value {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+/* type badge：圆角胶囊（emoji + 小写 label），4 色由 JS inline style 注入
+   （bg + color）。v5.1 popover 顶部行。 */
+.ref-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 20px;
+}
+/* type badge 内部的 emoji 字符：复用 chip 的字体回退链 */
+.ref-type-badge .ref-icon-emoji {
+  margin-right: 2px;
+}
+
+/* URL section（link type：favicon + mono URL，跟 desc section 独立展示）
+   v5.1.1 恢复 —— commit 8054e8e 删了 URL section（当时以为不需要），但模型
+   不输出 desc 时 popover 空白。改：desc + url 两个 section 各自按字段在否渲染。 */
+.ref-url-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.ref-pop-favicon-wrap {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.ref-pop-favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+.ref-pop-favicon-fallback {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-faint, #ccc);
+}
+.ref-url-text {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* content/snippet 预览：灰底 + 左侧竖线 + 底部渐变截断 */
+.ref-content-preview {
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  max-height: 60px;
+  overflow: hidden;
+  position: relative;
+  line-height: 1.5;
+}
+.ref-content-preview::after {
+  content: "";
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 20px;
+  background: linear-gradient(transparent, var(--bg));
+}
+
+/* mono 文本（memory key / tool name） */
+.ref-pop-mono {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* tool key-value grid */
+.ref-pop-kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  font-size: 11.5px;
+}
+.ref-pop-kv-key {
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ref-pop-kv-val {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--text);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* other type fallback */
+.ref-pop-json {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+  max-height: 200px;
+  overflow: auto;
+}

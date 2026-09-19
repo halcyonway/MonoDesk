@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ref chip + popover v5 — emoji + 完整字段 + 简化 popover</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-panel: #f7f7f5;
+    --bg-hover: #f1f1ef;
+    --bg-code: #f6f6f4;
+    --border: #ececea;
+    --border-strong: #dcdcd9;
+    --text: #1b1b1f;
+    --text-muted: #6b6b74;
+    --text-faint: #9c9ca4;
+    --accent: #4f46e5;
+    --accent-soft: rgba(79, 70, 229, 0.08);
+    --shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  }
+  body {
+    margin: 0;
+    padding: 40px 60px;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  h1 { font-size: 18px; margin: 0 0 8px; font-weight: 600; }
+  h2 { font-size: 14px; margin: 36px 0 12px; color: var(--text-muted); font-weight: 500; }
+  .caption { color: var(--text-muted); font-size: 12px; margin-bottom: 24px; }
+  .note {
+    background: #fff8e1; border-left: 3px solid #f0a020;
+    padding: 8px 12px; margin: 12px 0; font-size: 12px; border-radius: 0 4px 4px 0;
+  }
+  .note strong { color: #b06f00; }
+  code { background: var(--bg-code); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  /* —— v5 chip —— */
+  .ref-chip {
+    display: inline;
+    vertical-align: baseline;
+    padding: 2px 7px;
+    margin: 0 1px;
+    font-size: 11px;
+    line-height: 1.2;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: none;
+    position: relative;
+    top: -0.2em;
+  }
+  .ref-chip:hover { background: var(--accent); color: #fff; }
+  a.ref-chip { color: var(--accent); }
+  a.ref-chip:hover { color: #fff; text-decoration: none; }
+
+  /* —— emoji icon —— */
+  .ref-icon-emoji {
+    display: inline-block;
+    vertical-align: -1px;
+    margin-right: 3px;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "EmojiOne Color", sans-serif;
+    font-size: 11px;
+    line-height: 1;
+    opacity: 0.9;
+  }
+  .ref-chip:hover .ref-icon-emoji { opacity: 1; }
+
+  .ref-num {
+    font-weight: 500;
+    font-style: normal;
+  }
+
+  /* —— popover v5（无 type badge、无 title section）—— */
+  .ref-popover {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    width: 300px;
+    max-width: calc(100vw - 16px);
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  .ref-popover.visible { display: block; }
+  .ref-popover::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    width: 11px; height: 6px;
+    background: var(--bg-panel);
+    clip-path: polygon(0 6px, 0 1px, 50% 0, 100% 1px, 100% 6px, 50% calc(100% - 1px));
+    z-index: 1;
+  }
+  .ref-popover.arrow-center::before {
+    left: 50%;
+    transform: translateX(-5.5px);
+  }
+
+  .ref-pop-section {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ref-pop-section:last-child { border-bottom: none; }
+  .ref-pop-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+  }
+  .ref-pop-value {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  /* —— URL display —— */
+  .ref-url-display {
+    display: flex; align-items: flex-start;
+    gap: 6px;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+  .ref-pop-favicon-wrap { flex-shrink: 0; margin-top: 1px; }
+  .ref-pop-favicon {
+    width: 14px; height: 14px;
+    border-radius: 2px;
+  }
+  .ref-url-text {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  /* —— content preview —— */
+  .ref-content-preview {
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg);
+    border-radius: 4px;
+    padding: 6px 8px;
+    border-left: 2px solid var(--border-strong);
+    max-height: 60px;
+    overflow: hidden;
+    position: relative;
+    line-height: 1.5;
+  }
+  .ref-content-preview::after {
+    content: "";
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 20px;
+    background: linear-gradient(transparent, var(--bg));
+  }
+
+  /* —— mono (memory key / tool name) —— */
+  .ref-pop-mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--text);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  /* —— tool kv —— */
+  .ref-pop-kv {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 2px 10px;
+    font-size: 11.5px;
+  }
+  .ref-pop-kv-key {
+    color: var(--text-muted);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .ref-pop-kv-val {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--text);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  .anchor {
+    position: relative;
+    margin-bottom: 16px;
+    padding: 12px 0;
+  }
+
+  /* —— 段落示例（chip 实际 inline 形态）—— */
+  .demo-para {
+    max-width: 720px;
+    margin-bottom: 16px;
+    padding: 16px 20px;
+    background: var(--bg);
+  }
+
+  .state-box {
+    border: 1px dashed var(--border-strong);
+    padding: 16px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .state-label {
+    font-size: 11px; color: var(--text-muted); font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>ref chip + popover v5</h1>
+<p class="caption">
+  v4 痛点：chip 显示短标签（domain / key 末段），读者看不出 source；
+  popover 三 section 太重（type badge + URL + Title + Description）。
+  v5 改：chip 显示 <strong>完整字段</strong> + <strong>emoji icon</strong>；popover
+  简化，<strong>去掉 type badge section</strong> + <strong>chip 已展示的 Title 也不再重复</strong>。
+</p>
+
+<!-- ===================== chip 形态对比 ===================== -->
+<h2>1. chip 形态（v4 → v5 对比）</h2>
+<div class="state-box">
+  <div class="state-label">v4 短标签 → v5 完整字段 + emoji</div>
+  <p>
+    参考
+    <a class="ref-chip">github.com</a>
+    （v4）vs
+    <a class="ref-chip"><span class="ref-icon-emoji">🔗</span><span class="ref-num">NVIDIA 官网</span></a>
+    （v5）。
+  </p>
+  <p class="note">
+    v5 chip 走 sans 字体（不是 mono），完整字段。emoji 由 type 决定（link=🔗 / memory=📒 / snippet=💬 / tool=🔧）。
+    视觉稿里 emoji 用 Apple Color Emoji / Segoe UI Emoji 字体回退链。
+  </p>
+</div>
+
+<!-- ===================== type=link popover ===================== -->
+<h2>2. type=link popover（v5 简化）</h2>
+<div class="state-box">
+  <div class="state-label">link — 只剩 URL section</div>
+  <div class="demo-para">
+    了解更多 <a class="ref-chip"><span class="ref-icon-emoji">🔗</span><span class="ref-num">NVIDIA 官网</span></a> 和
+    <a class="ref-chip"><span class="ref-icon-emoji">🔗</span><span class="ref-num">Playwright Trace Viewer</span></a>。
+  </div>
+  <div class="anchor" style="height: 100px;">
+    <!-- 模拟 hover 第一个 chip -->
+    <div class="ref-popover visible arrow-center" style="top: 90px; left: 60px;">
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">URL</div>
+        <div class="ref-url-display">
+          <div class="ref-pop-favicon-wrap">
+            <div class="ref-pop-favicon" style="background: #76b900;"></div>
+          </div>
+          <span class="ref-url-text">https://www.nvidia.com/en-us/</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    v5：<strong>没有 type badge section</strong>（emoji 已经在 chip 里），
+    <strong>没有 Title section</strong>（"NVIDIA 官网" 已在 chip 里）。
+    popover 只剩 URL，<strong>300px 宽</strong>（v4 是 340px）。
+  </p>
+</div>
+
+<!-- ===================== type=memory popover ===================== -->
+<h2>3. type=memory popover</h2>
+<div class="state-box">
+  <div class="state-label">memory — Key + Snippet（没有 type badge / Title）</div>
+  <div class="demo-para">
+    根据 <a class="ref-chip"><span class="ref-icon-emoji">📒</span><span class="ref-num">2024 Q3 财报</span></a> 分析。
+  </div>
+  <div class="anchor" style="height: 130px;">
+    <div class="ref-popover visible arrow-center" style="top: 90px; left: 60px;">
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Key</div>
+        <div class="ref-pop-value"><span class="ref-pop-mono">notes/2024-q3-report.md</span></div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Snippet</div>
+        <div class="ref-content-preview">
+          第三季度营收 162 亿元，同比增长 23%。其中 AI 芯片业务贡献 87 亿元，占比 53.7%，超预期。本季度毛利率 68.5%。
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    chip fallback：没填 title 时显示完整 <code>key</code>（如 <code>identity/monox</code>）。
+  </p>
+</div>
+
+<!-- ===================== type=snippet popover ===================== -->
+<h2>4. type=snippet popover</h2>
+<div class="state-box">
+  <div class="state-label">snippet — From + Content</div>
+  <div class="demo-para">
+    论文指出 <a class="ref-chip"><span class="ref-icon-emoji">💬</span><span class="ref-num">DeepSeek 论文摘要</span></a>。
+  </div>
+  <div class="anchor" style="height: 140px;">
+    <div class="ref-popover visible arrow-center" style="top: 90px; left: 60px;">
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">From</div>
+        <div class="ref-pop-value">DeepSeek-A2 Technical Report, arXiv:2403.XXXXX</div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Content</div>
+        <div class="ref-content-preview">
+          We introduce DeepSeek-A2, a mixture-of-experts language model with 236B total parameters, of which 21B are activated per token. Training efficiency is improved through dynamic remapping...
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== type=tool popover ===================== -->
+<h2>5. type=tool popover</h2>
+<div class="state-box">
+  <div class="state-label">tool — key-value 网格</div>
+  <div class="demo-para">
+    查询结果 <a class="ref-chip"><span class="ref-icon-emoji">🔧</span><span class="ref-num">搜索工具</span></a>。
+  </div>
+  <div class="anchor" style="height: 110px;">
+    <div class="ref-popover visible arrow-center" style="top: 90px; left: 60px;">
+      <div class="ref-pop-section">
+        <div class="ref-pop-kv">
+          <span class="ref-pop-kv-key">tool</span>
+          <span class="ref-pop-kv-val">mono_search</span>
+          <span class="ref-pop-kv-key">query</span>
+          <span class="ref-pop-kv-val">NVIDIA 财报</span>
+          <span class="ref-pop-kv-key">results</span>
+          <span class="ref-pop-kv-val">12 条</span>
+          <span class="ref-pop-kv-key">latency</span>
+          <span class="ref-pop-kv-val">234ms</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 同一段多 chip ===================== -->
+<h2>6. 一段多 chip（不同 type）</h2>
+<div class="state-box">
+  <div class="state-label">同段落内 3 个不同 type 的 chip</div>
+  <div class="demo-para">
+    参考
+    <a class="ref-chip"><span class="ref-icon-emoji">🔗</span><span class="ref-num">36氪报道</span></a>、
+    <a class="ref-chip"><span class="ref-icon-emoji">📒</span><span class="ref-num">财报笔记</span></a>、
+    <a class="ref-chip"><span class="ref-icon-emoji">🔧</span><span class="ref-num">搜索结果</span></a>。
+  </div>
+  <p class="note">
+    hover 任一 chip，popover 各自独立触发。每个 chip 的 emoji 按 type 区分。
+  </p>
+</div>
+
+<!-- ===================== 长度上限 ===================== -->
+<h2>7. chip 长度上限（24 字符）</h2>
+<div class="state-box">
+  <div class="state-label">长 title 截断</div>
+  <div class="demo-para">
+    参考
+    <a class="ref-chip"><span class="ref-icon-emoji">🔗</span><span class="ref-num">NVIDIA 加速计算完整介绍文档</span></a>、
+    <a class="ref-chip"><span class="ref-icon-emoji">📒</span><span class="ref-num">蚂蚁领投 Pre-A …</span></a>。
+  </div>
+  <p class="note">
+    chip 文本统一 24 字符上限，超出加 <code>…</code>。emoji 占 2 字符宽度。
+    视觉稿里模拟两个 case：第一个 13 字不截；第二个模拟超长 title 截断。
+  </p>
+</div>
+
+<!-- ===================== 设计细节 ===================== -->
+<h2>设计细节对照表</h2>
+<table style="width:100%; font-size:12px; border-collapse:collapse;">
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; width:140px; color:var(--text-muted);">chip 字体</td>
+    <td style="padding:6px;">v4 mono → v5 sans（系统字体栈）</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">chip 字号</td>
+    <td style="padding:6px;">v4 9.5px → v5 11px（完整字段需要更大字号）</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">chip 文本策略</td>
+    <td style="padding:6px;">v4 shortLabel 截短（domain / key 末段）→ v5 完整字段 + fallback（link: title \|\| domain）</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">chip icon</td>
+    <td style="padding:6px;">v4 5 种 SVG（链/笔记本/气泡/扳手/问号）→ v5 inline emoji 字符（🔗/📒/💬/🔧/❓）+ 字体回退链</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">chip 长度上限</td>
+    <td style="padding:6px;">v4 各 type 独立 10/12/14 字符 → v5 统一 24 字符 + truncate(…)</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">popover 宽度</td>
+    <td style="padding:6px;">v4 340px → v5 300px（精简）</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">popover 内容</td>
+    <td style="padding:6px;">v4 type badge + URL + Title + Description → v5 去掉 type badge + chip 已展示的 Title，只剩 chip 没展示的字段</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">popover padding</td>
+    <td style="padding:6px;">section padding 8 → 7px</td>
+  </tr>
+  <tr>
+    <td style="padding:6px; color:var(--text-muted);">不变</td>
+    <td style="padding:6px;">popover 箭头 ::before / favicon Google → site fallback / URL safe scheme / link chip &lt;a&gt; 包整体 / streaming 阶段 raw token</td>
+  </tr>
+</table>
+
+</body>
+</html>

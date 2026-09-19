@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ref popover — clean design v4</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --bg-panel: #ffffff;
+    --border: #e6e4dd;
+    --text: #2a2a2a;
+    --text-muted: #6b6b66;
+    --accent: #3a7d6e;
+    --accent-soft: #e8f1ee;
+  }
+  body {
+    margin: 0;
+    padding: 40px 60px;
+    background: var(--bg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  h2 { font-size: 14px; margin: 36px 0 12px; color: var(--text-muted); font-weight: 500; }
+  .caption { color: var(--text-muted); font-size: 12px; margin-bottom: 24px; }
+
+  .msg-block {
+    max-width: 720px;
+    margin: 0 0 32px;
+    padding: 16px 20px;
+    background: var(--bg);
+    position: relative;
+  }
+  .msg-block p { margin: 0 0 12px; }
+
+  /* —— ref chip —— */
+  .ref-chip {
+    display: inline;
+    vertical-align: baseline;
+    padding: 0.5px 4px;
+    margin: 0 1px;
+    font-size: 9.5px;
+    line-height: 1;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    top: -0.3em;
+  }
+  .ref-chip:hover { background: var(--accent); color: var(--bg); }
+  a.ref-chip { color: var(--accent); }
+  a.ref-chip:hover { color: var(--bg); text-decoration: none; }
+
+  /* —— popover —— */
+  .ref-popover {
+    display: none;
+    position: absolute;
+    z-index: 100;
+    width: 340px;
+    max-width: calc(100vw - 16px);
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  .ref-popover.visible { display: block; }
+
+  /* 顶部三角箭头 */
+  .ref-popover::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    width: 11px;
+    height: 6px;
+    background: var(--bg-panel);
+    clip-path: polygon(0 6px, 0 1px, 50% 0, 100% 1px, 100% 6px, 50% calc(100% - 1px));
+    z-index: 1;
+  }
+  .ref-popover.arrow-center::before {
+    left: 50%;
+    transform: translateX(-5.5px);
+  }
+
+  /* —— type badge —— */
+  .ref-type-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 7px;
+    border-radius: 20px;
+    margin-bottom: 8px;
+  }
+  .ref-type-link   { background: #e8f1ee; color: #2d7a64; }
+  .ref-type-memory { background: #f0e8fc; color: #7a4db8; }
+  .ref-type-snippet{ background: #e8f4e8; color: #3d8b40; }
+  .ref-type-tool   { background: #fef3e2; color: #9a5a10; }
+  .ref-type-badge svg { width: 9px; height: 9px; }
+
+  /* —— sections —— */
+  .ref-pop-section {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ref-pop-section:last-child { border-bottom: none; }
+
+  .ref-pop-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .ref-pop-value {
+    font-size: 12px;
+    color: var(--text);
+    line-height: 1.4;
+  }
+
+  /* —— URL special display —— */
+  .ref-url-display {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+  .ref-url-display .favicon {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    background: var(--accent-soft);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .ref-url-text {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  /* —— snippet / memory content —— */
+  .ref-content-preview {
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg);
+    border-radius: 4px;
+    padding: 6px 8px;
+    border-left: 2px solid var(--border);
+    max-height: 60px;
+    overflow: hidden;
+    position: relative;
+  }
+  .ref-content-preview::after {
+    content: "";
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 20px;
+    background: linear-gradient(transparent, var(--bg));
+  }
+
+  /* —— tool result —— */
+  .ref-tool-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 8px;
+    font-size: 11.5px;
+  }
+  .ref-tool-key { color: var(--text-muted); font-weight: 500; }
+  .ref-tool-val { color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  /* —— anchor demo —— */
+  .anchor { position: relative; height: 160px; margin-bottom: 16px; }
+  .note {
+    background: #fff8e1;
+    border-left: 3px solid #f0a020;
+    padding: 8px 12px;
+    margin: 12px 0;
+    font-size: 12px;
+    border-radius: 0 4px 4px 0;
+  }
+  .note strong { color: #b06f00; }
+  code { background: #f4f1e8; padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+
+  .state-box {
+    border: 1px dashed var(--border-strong);
+    padding: 16px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .state-label {
+    font-size: 11px; color: var(--text-muted); font-weight: 500;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin-bottom: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>ref popover — clean design v4</h1>
+<p class="caption">
+  重新设计：<strong>不要截图、不要 hero 图</strong>。纯展示 type + content。
+  URL 特殊展示（favicon + 域名色）。四栏 type 各有专属布局。
+</p>
+
+<!-- ===================== type=link ===================== -->
+<h2>type=link</h2>
+<div class="state-box">
+  <div class="state-label">Link — URL 特殊展示 + favicon</div>
+  <p>了解更多 <a class="ref-chip">NVIDIA 官网</a>。</p>
+  <div class="anchor">
+    <div class="ref-popover visible arrow-center" style="top: 36px; left: 60px;">
+      <div class="ref-pop-section">
+        <span class="ref-type-badge ref-type-link">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5l3-3"/><path d="M5 8a2.5 2.5 0 0 1 0-3.5l2-2a2.5 2.5 0 0 1 3.5 3.5"/><path d="M11 8a2.5 2.5 0 0 1 0 3.5l-2 2a2.5 2.5 0 0 1-3.5-3.5"/></svg>
+          link
+        </span>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">URL</div>
+        <div class="ref-url-display">
+          <div class="favicon" style="background: #76b900;"></div>
+          <span class="ref-url-text">https://www.nvidia.com/en-us/</span>
+        </div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Title</div>
+        <div class="ref-pop-value">NVIDIA 官网</div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Description</div>
+        <div class="ref-pop-value">NVIDIA 开创加速计算，解决他人无法解决的挑战，在 AI 和数字孪生领域引领行业发展。</div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    URL 用 <code>font-family: mono</code> + favicon 圆形色块展示，域名作为视觉锚点。
+    Description 2 行截断，多出省略号。
+  </p>
+</div>
+
+<!-- ===================== type=memory ===================== -->
+<h2>type=memory</h2>
+<div class="state-box">
+  <div class="state-label">Memory — key + snippet 预览</div>
+  <p>根据 <a class="ref-chip">2024 Q3 财报</a> 分析。</p>
+  <div class="anchor">
+    <div class="ref-popover visible arrow-center" style="top: 36px; left: 60px;">
+      <div class="ref-pop-section">
+        <span class="ref-type-badge ref-type-memory">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8"/><path d="M10 2v4h4"/></svg>
+          memory
+        </span>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Key</div>
+        <div class="ref-pop-value" style="font-family: ui-monospace, monospace; font-size: 11.5px;">notes/2024-q3-report.md</div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Snippet</div>
+        <div class="ref-content-preview">
+          第三季度营收 162 亿元，同比增长 23%。其中 AI 芯片业务贡献 87 亿元，占比 53.7%，超预期。本季度毛利率 68.5%，环比提升 2.3 个百分点。
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    Snippet 区用浅灰背景 + 左边竖线 + 底部渐变遮罩表示截断。
+    最多显示约 3 行完整文本。
+  </p>
+</div>
+
+<!-- ===================== type=snippet ===================== -->
+<h2>type=snippet</h2>
+<div class="state-box">
+  <div class="state-label">Snippet — from + quoted content</div>
+  <p>论文指出 <a class="ref-chip">DeepSeek 论文摘要</a>。</p>
+  <div class="anchor">
+    <div class="ref-popover visible arrow-center" style="top: 36px; left: 60px;">
+      <div class="ref-pop-section">
+        <span class="ref-type-badge ref-type-snippet">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10h10M3 6h10M3 14h6"/></svg>
+          snippet
+        </span>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">From</div>
+        <div class="ref-pop-value">DeepSeek-A2 Technical Report, arXiv:2403.XXXXX</div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Content</div>
+        <div class="ref-content-preview">
+          We introduce DeepSeek-A2, a mixture-of-experts language model with 236B total parameters, of which 21B are activated per token. Training efficiency is improved through dynamic remapping and load balancing strategies...
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== type=tool ===================== -->
+<h2>type=tool</h2>
+<div class="state-box">
+  <div class="state-label">Tool — key-value grid</div>
+  <p>查询结果 <a class="ref-chip">搜索工具</a>。</p>
+  <div class="anchor">
+    <div class="ref-popover visible arrow-center" style="top: 36px; left: 60px;">
+      <div class="ref-pop-section">
+        <span class="ref-type-badge ref-type-tool">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h12M8 2l4 6-4 6"/></svg>
+          tool
+        </span>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-tool-grid">
+          <span class="ref-tool-key">tool</span>
+          <span class="ref-tool-val">mono_search</span>
+          <span class="ref-tool-key">query</span>
+          <span class="ref-tool-val">NVIDIA 财报</span>
+          <span class="ref-tool-key">results</span>
+          <span class="ref-tool-val">12 条</span>
+          <span class="ref-tool-key">latency</span>
+          <span class="ref-tool-val">234ms</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 一段多 chip ===================== -->
+<h2>一段多 chip — 各自独立 popover</h2>
+<div class="state-box">
+  <div class="state-label">同一个段落内三个不同 type 的 chip</div>
+  <div class="anchor" style="height: 190px;">
+    <p>参考 <a class="ref-chip">36氪报道</a>、<a class="ref-chip">财报笔记</a>、<a class="ref-chip">搜索结果</a>。</p>
+    <!-- 第一个 popover（link）模拟显示 -->
+    <div class="ref-popover visible arrow-center" style="top: 36px; left: 20px;">
+      <div class="ref-pop-section">
+        <span class="ref-type-badge ref-type-link">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5l3-3"/><path d="M5 8a2.5 2.5 0 0 1 0-3.5l2-2a2.5 2.5 0 0 1 3.5 3.5"/><path d="M11 8a2.5 2.5 0 0 1 0 3.5l-2 2a2.5 2.5 0 0 1-3.5-3.5"/></svg>
+          link
+        </span>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-url-display">
+          <div class="favicon" style="background: #4285f4;"></div>
+          <span class="ref-url-text">https://36kr.com/p/27891234.html</span>
+        </div>
+      </div>
+      <div class="ref-pop-section">
+        <div class="ref-pop-label">Title</div>
+        <div class="ref-pop-value">36氪深度报道</div>
+      </div>
+    </div>
+  </div>
+  <p class="note">
+    每个 chip hover 时 popover 箭头指向各自 chip。不同 type 的 badge 颜色不同。
+  </p>
+</div>
+
+<!-- ===================== 设计细节 ===================== -->
+<h2>设计细节</h2>
+<table style="width:100%; font-size:12px; border-collapse:collapse;">
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; width:120px; color:var(--text-muted);">结构</td>
+    <td style="padding:6px;">type badge 行 + N 个 section 行（每行 padding 9×12，底部分隔线）</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">type badge</td>
+    <td style="padding:6px;">4 色圆角胶囊（link绿/memory紫/snippet绿/tool橙），小写 icon + 文字</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">URL 展示</td>
+    <td style="padding:6px;">mono 字体 + favicon 圆形色块 + break-all + overflow-wrap</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">content/snippet</td>
+    <td style="padding:6px;">浅灰背景 + 左侧 2px 竖线 + 底部渐变遮罩表示截断</td>
+  </tr>
+  <tr style="border-bottom:1px solid var(--border);">
+    <td style="padding:6px; color:var(--text-muted);">tool</td>
+    <td style="padding:6px;">key-value 两列 grid，key 灰色 + val mono</td>
+  </tr>
+  <tr>
+    <td style="padding:6px; color:var(--text-muted);">箭头</td>
+    <td style="padding:6px;">popover 顶部水平居中（指向 chip 文字中心），11×6px 等腰三角</td>
+  </tr>
+</table>
+
+</body>
+</html>

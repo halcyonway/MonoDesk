@@ -938,8 +938,46 @@ export class StreamEngine {
     if (caret) caret.remove();
 
     const host = el.lastElementChild as HTMLElement | null;
-    // 跨越 markdown 块边界（\n\n）→ 整段重渲
-    if (/\n\n/.test(chars) || !host || host.tagName.toLowerCase() !== "p") {
+    // 触发整段重渲的三种情况：
+    //   1) chars 含 \n\n（跨段落边界）
+    //   2) 上一帧没有 <p> host（首次/异常）
+    //   3) chars 含闭合 `]]` 且 paintedBuf 末尾能配对到 `[[ref` —— streaming
+    //      阶段让 ref token 一闭合就立刻可视化成 chip（不必等 freeze），避免
+    //      表格 cell 里的 ref token 在 streaming 全程显示 raw 文本（用户
+    //      看到「突然整段 raw 出现在 freeze 后」撕裂感）。
+    //
+    // 检测规则：chars 自身含 `]]`，且 chars 里最后一个 `]]` 后面跟着的
+    // paintedBuf 末尾能找到配对的 `[[ref`（不要求 chars 内部配对 —— chars
+    // 可能就是 `]]` 这一个字符）。避免对历史的 `]]` 反复触发重渲。
+    let hasClosedRef = false;
+    if (chars.includes("]]")) {
+      const tail = stream.paintedBuf.slice(
+        Math.max(0, stream.paintedBuf.length - 200),
+      );
+      hasClosedRef =
+        tail.lastIndexOf("[[ref") >= 0 &&
+        tail.lastIndexOf("]]") > tail.lastIndexOf("[[ref");
+    }
+    // Fallback：ref token 出现在 paintedBuf 末尾但 chars 还没含 `]]`（如 ref
+    // token 跨 jitter buffer 帧，第一帧到 `[[ref id=1 ... title="..."`，
+    // 第二帧到 `desc="..."]]`）。当前帧 chars 不含 `]]` 时也触发一次重渲，
+    // 让用户尽快看到 chip 雏形（先把 token 之前的 raw 文本替换为正确的 chip HTML
+    // + 剩余 raw 后缀）。覆盖 Image 66 看到的「LLM 还在打字 ref 时，前面的
+    // raw token 一段时间内不渲染为 chip」的现象。
+    let hasOpenRefTail = false;
+    if (!hasClosedRef) {
+      const tail = stream.paintedBuf.slice(
+        Math.max(0, stream.paintedBuf.length - 200),
+      );
+      hasOpenRefTail = /\[\[ref\s[^[\]]*$/.test(tail);
+    }
+    if (
+      /\n\n/.test(chars) ||
+      !host ||
+      host.tagName.toLowerCase() !== "p" ||
+      hasClosedRef ||
+      hasOpenRefTail
+    ) {
       el.innerHTML = renderMarkdown(stream.paintedBuf);
       this.appendCaret(el);
       return;

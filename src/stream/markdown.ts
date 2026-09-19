@@ -1,6 +1,8 @@
 // markdown-lite 渲染：够用即可（代码块 / 行内码 / 粗斜体 / 链接 / 标题 / 列表 / 引用）。
 // 与 preview 版保持一致，输出 innerHTML 供流式引擎直接写 DOM。
 
+import { replaceRefs, renderRefChip } from "./ref-parser";
+
 export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -13,6 +15,18 @@ export const truncate = (s: string, n: number) =>
 export const CARET = '<span class="caret"></span>';
 
 function inline(s: string): string {
+  // ref token pre-pass：跟 inline code 块 `@@c0@@` placeholder 同套路 —— 先把
+  // ref chip HTML 占位成 `@@rN@@`（N 是 index），esc() 后再换回成完整 HTML。
+  // 这样 attrs 里 he() 转义过的字符不会被 esc() 二次转义。协议见
+  // spec/requirements/evidence-chain.md（v5.1：id 字段已删，chip 顺序号由
+  // replaceRefs 分配，renderRefChip 第二参数接收）。
+  const refs: string[] = [];
+  s = replaceRefs(s, (ref, seq) => {
+    const html = renderRefChip(ref, seq);
+    refs.push(html);
+    return "@@r" + (refs.length - 1) + "@@";
+  });
+
   const codes: string[] = [];
   s = s.replace(/`([^`]+)`/g, (_m, c: string) => {
     codes.push(c);
@@ -39,6 +53,9 @@ function inline(s: string): string {
   // 否则 image 替换完后 auto-link 又把 src= 里的 URL 二次匹配 → `<img src="<a href="...">..."</a>"`。
   s = s.replace(/(?<![="])(https?:\/\/[^\s)]+)(?=[.,;:!?'"]*(?:\s|$|<))/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   s = s.replace(/@@c(\d+)@@/g, (_m, i: string) => "<code>" + esc(codes[+i]) + "</code>");
+  // ref placeholder 替换：@@rN@@ → 真正的 chip HTML（HTML 已经过 he() 转义，
+  // 不会受 esc() 影响）。
+  s = s.replace(/@@r(\d+)@@/g, (_m, i: string) => refs[+i]);
   return s;
 }
 
@@ -125,6 +142,7 @@ export function renderMarkdown(src: string): string {
   let inCode = false;
   let buf: string[] = [];
   let lang = "";
+  let prevBlank = false; // 上一行是空行：避免连续空行产生多个 <p></p> 视觉断行
 
   while (i < lines.length) {
     const line = lines[i];
@@ -147,7 +165,15 @@ export function renderMarkdown(src: string): string {
     }
     const t = line.trim();
     if (t === "") {
-      out += "<p></p>";
+      // 连续空行只产生一个垂直断点：避免「ref token 上下都空行」渲染出两个空段
+      // 把 ref chip 段推得老远。**必须 continue**，否则 while 末尾的
+      // prevBlank=false 会把刚设的 true 立刻复位 → 下次空行还会再产 <p></p>。
+      if (!prevBlank) {
+        out += "<p></p>";
+        prevBlank = true;
+      }
+      i++;
+      continue;
     } else if (t.startsWith("|")) {
       const tbl = tryTable(lines, i);
       if (tbl) {
@@ -168,8 +194,44 @@ export function renderMarkdown(src: string): string {
     } else if (t.startsWith("> ")) {
       out += "<blockquote>" + inline(t.slice(2)) + "</blockquote>";
     } else {
-      out += "<p>" + inline(line) + "</p>";
+      // 默认段落。**特例：行内只含 ref token + 空白时剥掉 <p>**，让 ref 跟上一段
+      // inline。否则 LLM 把 ref token 单独放一行时，整段 <p> 会撑独立段落行，
+      // 破坏 ref chip 的 inline-first 设计。检测用 raw line（不是 inline 输出，
+      // 因为 inline 内部已经把 ref token 替换成 chip HTML，placeholder 没了）。
+      // **ref-only 行不 reset prevBlank**：跟空行同理，前后空行都该折叠成 1 个。
+      const refsInLine = (line.match(/\[\[ref\s/g) || []).length;
+      const lineWithoutRefs = line.replace(/\[\[ref\s[\s\S]+?\]\]/g, "").trim();
+      const onlyRefsAndWhitespace = refsInLine > 0 && lineWithoutRefs === "";
+      const rendered = inline(line);
+      if (onlyRefsAndWhitespace) {
+        // ref-only 行：把 chip inline 进上一个段落，避免悬空。
+        // 浏览器对 `<p>...</p><a>...</a>` 会把 <a> 当独立行元素推到段落右侧
+        // 空白（Image 65 视觉 bug）。正确做法是 chip 在 <p> 内部末尾。
+        if (prevBlank && out.endsWith("<p></p>")) {
+          // ref-only 行在空行之后：先去掉 <p></p>，再把 chip 追加到再上一段尾
+          // （如果有 </p>）
+          out = out.slice(0, -"<p></p>".length);
+          if (out.endsWith("</p>")) {
+            out = out.slice(0, -"</p>".length) + rendered + "</p>";
+          } else {
+            // 上面没有段落（ref 是文档开头）→ ref 单独一段
+            out += rendered;
+          }
+          prevBlank = false;
+        } else if (out.endsWith("</p>")) {
+          // 直接紧跟段落：把 chip 追加进上一段尾部的 </p> 之前
+          out = out.slice(0, -"</p>".length) + rendered + "</p>";
+        } else {
+          out += rendered;
+        }
+      } else {
+        out += "<p>" + rendered + "</p>";
+        prevBlank = false;
+      }
+      i++;
+      continue;
     }
+    prevBlank = false;
     i++;
   }
   if (inCode) out += codeBlock(buf.join("\n"), lang);

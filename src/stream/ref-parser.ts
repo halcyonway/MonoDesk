@@ -19,6 +19,12 @@ export interface Ref {
 // non-greedy，停在第一个 ]]。整段 raw 保留作为 fallback（parse 失败时）。
 const REF_RE = /\[\[ref\s+([\s\S]+?)\]\]/g;
 
+// 容错 fallback：LLM 偶尔 emit 不闭合的 ref token（截断在 freeze 边界 /
+// 内部流式出错），形如 `[[ref type=link url="..." title="..."`。匹配段尾
+// （`\n\s*\n`）或字符串末尾（`$`）作为终止 —— 第一个 pass 之后剩下的
+// `[[ref ...` 都是没闭合的。
+const REF_UNCLOSED_RE = /\[\[ref\s+([\s\S]+?)(?=\n\s*\n|$)/g;
+
 // 单个 key=value：value 是 "..." / '...' / bare。
 // KV_RE = /(\w+)=("([^"]*)"|'([^']*)'|(\S+))/
 // m[1]=key, m[2]=含引号整体/bare, m[3]=双引号 content, m[4]=单引号 content, m[5]=bare
@@ -49,18 +55,41 @@ export function parseRefBody(body: string): Ref | null {
 // 扫描 src，把所有 [[ref ...]] token 替换成 render(ref, seq) 返回的字符串。
 // seq：渲染时按出现顺序分配 chip 序号（1-based），用作 chip ↔ popover 配对 key（HTML data-ref-id）。
 // 解析失败 → 保留 raw token 当 fallback（不抛错，跟 markdown 容错一致）。
+//
+// 两阶段解析：
+//   pass 1：闭合的 [[ref ...]] —— 正常 emit chip
+//   pass 2：未闭合的 [[ref ...（到段尾 / 字符串尾）—— LLM 偶尔 emit 不完整，
+//           自动加 ]] 后再走 parser；parse 仍失败就补 ]] 后保留 raw，避免
+//           用户看到挂着的 raw token
 export function replaceRefs(
   src: string,
   render: (ref: Ref, seq: number, raw: string) => string,
 ): string {
   REF_RE.lastIndex = 0;
+  REF_UNCLOSED_RE.lastIndex = 0;
   let seq = 0;
-  return src.replace(REF_RE, (_m, body: string) => {
+
+  // pass 1: 闭合 token
+  let out = src.replace(REF_RE, (_m, body: string) => {
     const ref = parseRefBody(body);
     if (!ref) return _m;
     seq++;
     return render(ref, seq, _m);
   });
+
+  // pass 2: 未闭合 token（LLM 流式错误 / freeze 截断）。手动加 ]] 后重解析。
+  // 只在 src 含 `[[ref` 时跑（避免无意义正则）。
+  if (out.includes("[[ref")) {
+    out = out.replace(REF_UNCLOSED_RE, (m, body: string) => {
+      const fixed = m + "]]";
+      const ref = parseRefBody(body);
+      if (!ref) return fixed; // 补 ]] 后保留 raw 文本（不再挂半个 token）
+      seq++;
+      return render(ref, seq, fixed);
+    });
+  }
+
+  return out;
 }
 
 // HTML 转义：用于 popover 内容，避免 attrs 里的 < > & " 破坏 DOM。

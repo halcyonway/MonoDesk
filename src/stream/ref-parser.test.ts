@@ -392,4 +392,74 @@ describe("replaceRefs + renderRefChip 集成", () => {
     expect(r1).toContain('data-ref-id="5"');
     expect(r2).toContain('data-ref-id="7"');
   });
+
+  // ---- 容错：LLM 偶尔 emit 不闭合的 ref token（截断在 freeze 边界）----
+
+  it("37. 未闭合的 ref token（缺 ]]）走 fallback：自动补 ]] 后正常 parse", () => {
+    // 实际场景：LLM streaming 时 token 被截断，最终 chat buffer 形如
+    //   text [[ref type=link url="https://x.com" title="T"
+    // （缺 ]]）
+    const out = replaceRefs(
+      `观点 [[ref type=link url="https://x.com" title="T"`,
+      renderRefChip,
+    );
+    // 正常渲染成 chip（不是 raw token 挂在页面）
+    expect(out).toContain('class="ref-chip"');
+    expect(out).toContain('data-ref-id="1"');
+    expect(out).toContain('class="ref-popover"');
+    // chip 含 title
+    expect(out).toMatch(/<span class="ref-num">T<\/span>/);
+    // raw token 不再挂在页面（自动补了 ]]）
+    expect(out).not.toContain("[[ref");
+  });
+
+  it("38. 未闭合 token 在段尾（buffer 末尾）：同上 fallback", () => {
+    const out = replaceRefs(
+      `[[ref type=memory key="k" snippet="s"`,
+      renderRefChip,
+    );
+    expect(out).toContain('class="ref-chip"');
+    expect(out).toContain("memory");
+    expect(out).not.toContain("[[ref");
+  });
+
+  it("39. 未闭合 token 在段中（后面有内容）：只解析到段尾前", () => {
+    // 段中位置 fallback：ref body 取到下一个空行前
+    const out = replaceRefs(
+      `前文 [[ref type=link url="https://x.com" title="T"
+
+后文`,
+      renderRefChip,
+    );
+    expect(out).toContain('class="ref-chip"');
+    expect(out).toContain('data-ref-id="1"');
+    // 后文段不被吞
+    expect(out).toContain("后文");
+  });
+
+  it("40. 闭合 token 优先于未闭合 token（正常路径）", () => {
+    // mixed：第一个闭合，第二个没闭合
+    const out = replaceRefs(
+      `A [[ref type=link url="https://a.com" title="A"]] B [[ref type=memory key="k" snippet="s"`,
+      renderRefChip,
+    );
+    expect(out.match(/class="ref-chip"/g)?.length).toBe(2);
+    expect(out).toContain('data-ref-id="1"');
+    expect(out).toContain('data-ref-id="2"');
+  });
+
+  it("41. 完全不闭合 + 缺 type：parse 失败，但自动补 ]] 收尾（不再挂半个 token）", () => {
+    // 极端 case：[[ref ... 但连 type 都没。parse 失败时仍然补 ]] 收尾
+    // （跟正常路径一致：补 ]], parse 失败 → 保留 raw 不渲染 chip）。
+    const out = replaceRefs(
+      `text [[ref some garbage data`,
+      renderRefChip,
+    );
+    // 不渲染 chip（parse 失败）
+    expect(out).not.toContain('class="ref-chip"');
+    // raw token 被补 ]] 收尾（防止下次 ref pre-pass 重复触发 raw 显示）
+    expect(out).toContain("]]");
+    // raw 文本仍然可见（markdown 容错：parse 失败保留 raw 让用户看到原 token）
+    expect(out).toContain("[[ref");
+  });
 });

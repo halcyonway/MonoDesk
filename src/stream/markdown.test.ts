@@ -52,3 +52,68 @@ describe("renderMarkdown inline image", () => {
     expect(out).toContain("旁边是图");
   });
 });
+
+describe("renderMarkdown ref token ([[ref ...]])", () => {
+  // 协议见 spec/requirements/evidence-chain.md。
+  // renderMarkdown 在 inline() 入口做 ref pre-pass（早于 esc()），把 token
+  // 替换成 .ref-chip + .ref-popover HTML。
+
+  it("renders single ref token inline", () => {
+    const out = renderMarkdown(`text [[ref id=1 type=link url="https://x.com" title="T"]] more`);
+    expect(out).toContain('class="ref-chip"');
+    expect(out).toContain('data-ref-id="1"');
+    expect(out).toContain('data-ref-type="link"');
+    expect(out).toContain('class="ref-popover"');
+    expect(out).toContain("ref-pop-title");
+    expect(out).toContain("ref-pop-url");
+    expect(out).not.toContain("[[ref");
+  });
+
+  it("renders multiple refs in one line", () => {
+    const src = `A [[ref id=1 type=link url="https://a" title="A"]] B [[ref id=2 type=memory key="k" snippet="s"]]`;
+    const out = renderMarkdown(src);
+    expect(out.match(/class="ref-chip"/g)?.length).toBe(2);
+    expect(out.match(/class="ref-popover"/g)?.length).toBe(2);
+    expect(out).toContain('data-ref-id="1"');
+    expect(out).toContain('data-ref-id="2"');
+  });
+
+  it("ref token survives inline markdown neighbors", () => {
+    const out = renderMarkdown(
+      `**bold** [[ref id=1 type=link url="https://x" title="T"]] **end**`,
+    );
+    expect(out).toContain("<strong>bold</strong>");
+    expect(out).toContain('class="ref-chip"');
+    expect(out).toContain("<strong>end</strong>");
+  });
+
+  it("ref popover content is escaped (attrs contain < > &)", () => {
+    const out = renderMarkdown(
+      `[[ref id=1 type=memory key="<script>" snippet="a&b"]]`,
+    );
+    expect(out).toContain("&lt;script&gt;");
+    expect(out).toContain("a&amp;b");
+    // 关键：未转义的 <script> 不能进入 popover DOM
+    expect(out).not.toMatch(/<script>/);
+  });
+
+  it("ref token with parse failure (missing id) falls back to plain text", () => {
+    const out = renderMarkdown(`text [[ref type=link url="x"]] more`);
+    expect(out).toContain("[[ref type=link url=\"x\"]]");
+    expect(out).not.toContain('class="ref-chip"');
+  });
+
+  it("ref token inside code block is NOT parsed (code block content is opaque)", () => {
+    const src = "```\n[[ref id=1 type=link url=\"https://x\"]]\n```";
+    const out = renderMarkdown(src);
+    // code 块原样保留 token 文本
+    expect(out).toContain("[[ref id=1 type=link");
+    expect(out).not.toContain('class="ref-chip"');
+  });
+
+  it("ref chip [N] label uses the ref id", () => {
+    const out = renderMarkdown(`[[ref id=42 type=memory key="k" snippet="s"]]`);
+    expect(out).toContain("[42]");
+    expect(out).toContain('data-ref-id="42"');
+  });
+});

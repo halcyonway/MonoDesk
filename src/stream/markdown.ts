@@ -1,6 +1,8 @@
 // markdown-lite 渲染：够用即可（代码块 / 行内码 / 粗斜体 / 链接 / 标题 / 列表 / 引用）。
 // 与 preview 版保持一致，输出 innerHTML 供流式引擎直接写 DOM。
 
+import { replaceRefs, renderRefChip } from "./ref-parser";
+
 export const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -13,6 +15,17 @@ export const truncate = (s: string, n: number) =>
 export const CARET = '<span class="caret"></span>';
 
 function inline(s: string): string {
+  // ref token pre-pass：跟 inline code 块 `@@c0@@` placeholder 同套路 —— 先把
+  // ref chip HTML 占位成 `@@rN@@`（N 是 index），esc() 后再换回成完整 HTML。
+  // 这样 attrs 里 he() 转义过的字符不会被 esc() 二次转义。协议见
+  // spec/requirements/evidence-chain.md。
+  const refs: string[] = [];
+  s = replaceRefs(s, (ref) => {
+    const html = renderRefChip(ref);
+    refs.push(html);
+    return "@@r" + (refs.length - 1) + "@@";
+  });
+
   const codes: string[] = [];
   s = s.replace(/`([^`]+)`/g, (_m, c: string) => {
     codes.push(c);
@@ -39,6 +52,9 @@ function inline(s: string): string {
   // 否则 image 替换完后 auto-link 又把 src= 里的 URL 二次匹配 → `<img src="<a href="...">..."</a>"`。
   s = s.replace(/(?<![="])(https?:\/\/[^\s)]+)(?=[.,;:!?'"]*(?:\s|$|<))/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   s = s.replace(/@@c(\d+)@@/g, (_m, i: string) => "<code>" + esc(codes[+i]) + "</code>");
+  // ref placeholder 替换：@@rN@@ → 真正的 chip HTML（HTML 已经过 he() 转义，
+  // 不会受 esc() 影响）。
+  s = s.replace(/@@r(\d+)@@/g, (_m, i: string) => refs[+i]);
   return s;
 }
 

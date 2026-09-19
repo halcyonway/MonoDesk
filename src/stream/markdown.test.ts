@@ -64,8 +64,16 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     expect(out).toContain('data-ref-id="1"');
     expect(out).toContain('data-ref-type="link"');
     expect(out).toContain('class="ref-popover"');
-    expect(out).toContain("ref-pop-title");
-    expect(out).toContain("ref-pop-url");
+    // v5: link popover 只剩 URL section（无 type badge / 无 Title section）
+    expect(out).not.toContain('class="ref-type-badge"');
+    expect(out).toContain('class="ref-pop-section"');
+    expect(out).toContain('class="ref-url-display"');
+    expect(out).toContain('class="ref-url-text"');
+    // URL section 内部仍有 label / value 容器
+    expect(out).toContain('class="ref-pop-label"');
+    expect(out).toContain('class="ref-pop-value"');
+    // 无 Open 按钮：跳转走点击 chip 本身
+    expect(out).not.toContain('class="ref-pop-open"');
     expect(out).not.toContain("[[ref");
   });
 
@@ -111,9 +119,89 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     expect(out).not.toContain('class="ref-chip"');
   });
 
-  it("ref chip [N] label uses the ref id", () => {
+  it("ref chip label uses full field (no longer truncated) — fallback to key when no title", () => {
     const out = renderMarkdown(`[[ref id=42 type=memory key="k" snippet="s"]]`);
-    expect(out).toContain("[42]");
+    // v5: memory 没填 title → fallback 到完整 key = "k"（替代旧的 [42] 数字；
+    // 不再截短到末段，但单段 path 的 fallback 恰好就是末段）。完整字段 + emoji
+    // 路径见 ref-parser.test.ts 30-37。
+    expect(out).toContain("<span class=\"ref-num\">k</span>");
     expect(out).toContain('data-ref-id="42"');
+  });
+
+  it("renders all 4 ref types (link / memory / snippet / tool)", () => {
+    // v5: 每种 type 都出 chip + popover，popover 都不再含 type badge section
+    const src = [
+      `link [[ref id=1 type=link url="https://x.com" title="L"]]`,
+      `memory [[ref id=2 type=memory key="k" snippet="s"]]`,
+      `snippet [[ref id=3 type=snippet from="f" content="c"]]`,
+      `tool [[ref id=4 type=tool tool_name="n" call_id="c" result_summary="r"]]`,
+    ].join(" ");
+    const out = renderMarkdown(src);
+    // 4 个 chip
+    expect(out.match(/class="ref-chip"/g)?.length).toBe(4);
+    // 4 个 popover
+    expect(out.match(/class="ref-popover"/g)?.length).toBe(4);
+    // v5: 没有 type badge section（emoji 已在 chip 里）
+    expect(out).not.toContain('class="ref-type-badge"');
+    // 每个 popover 至少 1 个 section（URL / Key+Snippet / From+Content / kv grid）
+    expect(out.match(/class="ref-pop-section"/g)?.length).toBeGreaterThanOrEqual(4);
+  });
+
+  // Image 57 反馈：ref token 单独占一行时被包成 <p> 撑一个独立段，破坏 inline-first
+  it("ref-only line is NOT wrapped in <p> (stays inline with previous block)", () => {
+    // 模拟 LLM 输出：bullet + 段间空行 + ref token 单独一行
+    const src = [
+      `- bullet text`,
+      ``,
+      `[[ref id=1 type=link url="https://x.com" title="L"]]`,
+    ].join("\n");
+    const out = renderMarkdown(src);
+    // ref chip 不能被 <p> 包裹
+    // 期望：ref chip 直接出现，没有 <p>...ref-chip...</p> 这种形态
+    expect(out).not.toMatch(/<p>[^<]*<a[^>]*ref-chip/i);
+    // 但 chip 必须仍然渲染（不是被吞掉）
+    expect(out).toContain('class="ref-chip"');
+  });
+
+  it("multiple consecutive blank lines collapse to a single paragraph break", () => {
+    // 视觉断点只用 1 个 <p></p>，避免垂直间隔过宽把 ref chip 推得老远
+    const src = [`text`, ``, ``, ``, `more text`].join("\n");
+    const out = renderMarkdown(src);
+    const blanks = out.match(/<p><\/p>/g);
+    // 最多 1 个（连续空行折叠）
+    expect(blanks?.length ?? 0).toBeLessThanOrEqual(1);
+  });
+
+  it("ref line with surrounding blank lines stays inline (no vertical push-away)", () => {
+    // 真实场景：LLM 把 ref 夹在两段之间带上下空行 → 不该 ref 段单独占一截
+    const src = [
+      `前面一段。`,
+      ``,
+      `[[ref id=2 type=link url="https://github.com" title="G"]]`,
+      ``,
+      `后面一段。`,
+    ].join("\n");
+    const out = renderMarkdown(src);
+    // ref chip 前后不该出现 <p></p> 把 ref 推走（最多 1 个合理垂直断点）
+    const blanks = out.match(/<p><\/p>/g)?.length ?? 0;
+    expect(blanks).toBeLessThanOrEqual(1);
+    // ref chip 仍然存在
+    expect(out).toContain('class="ref-chip"');
+  });
+
+  // Image 65 反馈：LLM 把 ref 紧跟前一段落 + 前面空行隔开时，chip 飘到段落
+  // 右侧空白。修法：ref-only 行 + 前面有空行 → inline 进上一个段落。
+  it("ref line after blank line inlines into previous paragraph (Image 65)", () => {
+    const src = [
+      `上传后需要等待 Apple 处理，处理完成后会出现在 TestFlight 页面。`,
+      ``,
+      `[[ref id=2 type=link url="https://developer.apple.com/testflight" title="Apple 上传说明"]]`,
+    ].join("\n");
+    const out = renderMarkdown(src);
+    // 关键断言：ref chip 必须出现在「页面。」之后的同一个 <p> 内部，
+    // 而不是 </p> 之后的悬空 inline 元素（那会被浏览器推到段落右侧空白）
+    expect(out).toMatch(/页面。[\s\S]*?<a class="ref-chip"[\s\S]*?<\/p>/);
+    // 不应有「</p><a class="ref-chip」这种悬空
+    expect(out).not.toMatch(/<\/p><a class="ref-chip"/);
   });
 });

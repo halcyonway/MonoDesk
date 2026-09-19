@@ -73,42 +73,142 @@ function truncate(s: string, n: number): string {
 }
 
 // popover 内容按 type 渲染。
+// spec: spec/ui/ref-chip-popover-v5.html (v5: emoji chip + 简化 popover)
+//   - 去掉 type badge section（emoji 已在 chip 里）
+//   - 去掉 chip 已展示的 Title section（title 跟 chip 重复）
+//   - 只保留 chip 没展示的字段：URL / snippet / kv grid
 // 所有字段都 he() 转义；URL 额外走 safeUrl() 过滤危险 scheme。
 function renderPopover(ref: Ref): string {
   const a = ref.attrs;
+
+  // section 行：包含 label + value，底部分隔线
+  const section = (label: string, value: string) =>
+    `<div class="ref-pop-section">` +
+    `<div class="ref-pop-label">${he(label)}</div>` +
+    `<div class="ref-pop-value">${value}</div>` +
+    `</div>`;
+
   switch (ref.type) {
     case "link": {
-      const title = a.title ? `<div class="ref-pop-title">${he(a.title)}</div>` : "";
-      const url = a.url ? safeUrl(a.url) : null;
-      const urlHtml = url
-        ? `<a class="ref-pop-url" href="${he(url)}" target="_blank" rel="noopener">${he(truncate(url, 60))}</a>`
-        : a.url
-        ? `<div class="ref-pop-url ref-pop-unsafe">${he(truncate(a.url, 60))} (unsafe scheme)</div>`
-        : "";
-      return title + urlHtml;
+      const url = a.url ? (safeUrl(a.url) ?? "") : "";
+      const domain = a.url ? extractDomain(a.url) : "";
+      const favicon = domain ? getFaviconUrl(domain) : "";
+
+      // URL section: favicon + mono 字体 URL。title / desc 都已在 chip 里展示，
+      // v5 不再在 popover 重复 Title section（避免字符级断行，参考 Image 60）。
+      const faviconHtml = favicon
+        ? `<img class="ref-pop-favicon" src="${he(favicon)}" alt="" loading="lazy" data-favicon-stage="google" data-favicon-domain="${he(domain)}" />`
+        : `<span class="ref-pop-favicon-fallback" aria-hidden="true">·</span>`;
+      return section(
+        "URL",
+        `<div class="ref-url-display">` +
+          `<div class="ref-pop-favicon-wrap">${faviconHtml}</div>` +
+          `<span class="ref-url-text">${he(url)}</span>` +
+        `</div>`,
+      );
     }
     case "memory": {
-      const key = a.key ? `<div class="ref-pop-key">${he(a.key)}</div>` : "";
-      const snippet = a.snippet ? `<div class="ref-pop-snippet">${he(truncate(a.snippet, 120))}</div>` : "";
-      return key + snippet;
+      const key = he(a.key || "");
+      const snippet = he(truncate(a.snippet || "", 160));
+      let html = "";
+      if (key) html += section("Key", `<span class="ref-pop-mono">${key}</span>`);
+      if (snippet) {
+        html += section(
+          "Snippet",
+          `<div class="ref-content-preview">${snippet}</div>`,
+        );
+      }
+      return html;
     }
     case "snippet": {
-      const from = a.from ? `<div class="ref-pop-from">${he(a.from)}</div>` : "";
-      const content = a.content ? `<div class="ref-pop-content">${he(truncate(a.content, 200))}</div>` : "";
-      return from + content;
+      const from = he(a.from || "");
+      const content = he(truncate(a.content || "", 200));
+      let html = "";
+      if (from) html += section("From", from);
+      if (content) {
+        html += section(
+          "Content",
+          `<div class="ref-content-preview">${content}</div>`,
+        );
+      }
+      return html;
     }
     case "tool": {
-      const name = a.tool_name ? `<div class="ref-pop-tool">${he(a.tool_name)}</div>` : "";
-      const args = a.args ? `<div class="ref-pop-args">${he(truncate(a.args, 80))}</div>` : "";
-      const summary = a.result_summary ? `<div class="ref-pop-result">${he(truncate(a.result_summary, 120))}</div>` : "";
-      return name + args + summary;
+      // key-value grid
+      const rows: string[] = [];
+      if (a.tool_name) {
+        rows.push(`<div class="ref-pop-kv-key">Tool</div><div class="ref-pop-kv-val">${he(a.tool_name)}</div>`);
+      }
+      if (a.call_id) {
+        rows.push(`<div class="ref-pop-kv-key">Call&nbsp;ID</div><div class="ref-pop-kv-val">${he(a.call_id)}</div>`);
+      }
+      if (a.result_summary) {
+        rows.push(`<div class="ref-pop-kv-key">Result</div><div class="ref-pop-kv-val">${he(a.result_summary)}</div>`);
+      }
+      const grid = rows.length
+        ? `<div class="ref-pop-kv">${rows.join("")}</div>`
+        : "";
+      return `<div class="ref-pop-section">${grid}</div>`;
     }
     default: {
-      // other / 未识别 type：JSON dump 所有 attrs（降级渲染）
-      const json = JSON.stringify(a);
-      return `<pre class="ref-pop-json">${he(json)}</pre>`;
+      const json = he(JSON.stringify(a));
+      return (
+        `<div class="ref-pop-section">` +
+        `<pre class="ref-pop-json">${json}</pre>` +
+        `</div>`
+      );
     }
   }
+}
+
+// chip 用的 type icon（inline emoji 字符，v5 引入）。
+// v4 是 5 种 SVG icon（链/笔记本/气泡/扳手/问号），统一在小尺寸下视觉参差；
+// v5 改 emoji 字符 + CSS 字体回退链（Apple Color Emoji / Segoe UI Emoji /
+// Noto Color Emoji / EmojiOne Color / sans-serif），跨 type 视觉一致。
+// （短文本 chip：font-size 11px sans，emoji 11px 视觉对齐 baseline）
+const CHIP_EMOJI: Record<string, string> = {
+  link: "🔗",
+  memory: "📒",
+  snippet: "💬",
+  tool: "🔧",
+};
+function renderChipIcon(type: string): string {
+  const e = CHIP_EMOJI[type] ?? "❓";
+  return `<span class="ref-icon-emoji" aria-hidden="true">${e}</span>`;
+}
+
+// chip 文本：完整字段 + fallback（v5 改）。
+//   link    → a.title || extractDomain(a.url)         // fallback 到 domain
+//   memory  → a.title || a.key                          // fallback 到完整 key
+//   snippet → a.from
+//   tool    → a.tool_name
+//   other   → 第一个 attr value
+//
+// 统一 24 字符上限（v4 各 type 独立 10/12/14 太短，完整字段需要放宽）。
+// 设计：复用 LLM 已经在 emit 的 title / key / from / tool_name 字段，
+// 不改 ref token 协议，不改 system prompt。LLM 不填 title 时走 fallback。
+function shortLabel(ref: Ref): string {
+  const a = ref.attrs;
+  const MAX = 24;
+  let raw = "";
+  switch (ref.type) {
+    case "link":
+      raw = a.title || extractDomain(a.url || "");
+      break;
+    case "memory":
+      raw = a.title || a.key || "";
+      break;
+    case "snippet":
+      raw = a.from || "";
+      break;
+    case "tool":
+      raw = a.tool_name || "";
+      break;
+    default:
+      raw = Object.values(a)[0] || "";
+      break;
+  }
+  return truncate(raw, MAX);
 }
 
 // 只放行 http: / https: / mailto:，其它 scheme 返回 null 让上层走 unsafe 分支。
@@ -116,13 +216,38 @@ function safeUrl(url: string): string | null {
   return SAFE_URL_RE.test(url) ? url : null;
 }
 
-// chip 文本：渲染 [N] 的小标样式。id 必须存在（parse 已校验 ≥1）。
+// 提取 url 的 domain 部分（无 protocol、无 path）。
+// 用于 popover 头部展示「github.com」之类的友好标签。
+// 失败时返回 ""（caller 用 fallback 渲染）。
+function extractDomain(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+// favicon URL：Google 公共 favicon 服务。CORS 友好（无 Access-Control-Allow-Origin
+// 但 <img> 不受 CORS 限制；返回 204 时 onerror 走 fallback）。
+function getFaviconUrl(domain: string): string {
+  if (!domain) return "";
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32`;
+}
+
+// chip 文本：渲染 inline 短标签（替代 [N] 数字）。
+// link type 整个 chip 包成 <a>：点击直接跳转，hover 才弹 preview card。
+// 其它 type chip 保持纯 span（hover/click 走 popover）。
+//
+// 用 <sup>（脚注）形态天然 inline-first，baseline 自动抬升跟文字对齐。
 export function renderRefChip(ref: Ref): string {
   const popover = renderPopover(ref);
-  return (
-    `<span class="ref-chip" data-ref-id="${ref.id}" data-ref-type="${he(ref.type)}" tabindex="0">` +
-    `<span class="ref-num">[${ref.id}]</span>` +
-    `</span>` +
-    `<div class="ref-popover" data-ref-id="${ref.id}">${popover}</div>`
-  );
+  const icon = renderChipIcon(ref.type);
+  const label = he(shortLabel(ref));
+  const inner = `${icon}<span class="ref-num">${label}</span>`;
+  const chipOpen =
+    ref.type === "link" && ref.attrs.url && safeUrl(ref.attrs.url)
+      ? `<a class="ref-chip" data-ref-id="${ref.id}" data-ref-type="${he(ref.type)}" tabindex="0" href="${he(ref.attrs.url)}" target="_blank" rel="noopener">${inner}</a>`
+      : `<span class="ref-chip" data-ref-id="${ref.id}" data-ref-type="${he(ref.type)}" tabindex="0">${inner}</span>`;
+  return chipOpen + `<div class="ref-popover" data-ref-id="${ref.id}">${popover}</div>`;
 }

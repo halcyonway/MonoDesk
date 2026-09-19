@@ -40,13 +40,15 @@ MonoX 是 2022 年成立的 AI agent runtime [1]。
 
 | type | 必填字段 | 可选字段 | 渲染形态 |
 |---|---|---|---|
-| `link` | `url` | `title` | chip 文本 `[N]`，点击 → 新窗口打开 url；hover 显示 title + url |
-| `memory` | `key`, `snippet` | `title` | chip 文本 `[N]`，hover 显示 key + snippet（snippet > 120 字符截断） |
-| `snippet` | `from`, `content` | — | chip 文本 `[N]`，hover 显示 from（来源描述）+ content |
-| `tool` | `tool_name`, `call_id` | `args`, `result_summary` | chip 文本 `[N]`，hover 显示 tool_name + args + result_summary |
-| `other` | 任意 | 任意 | chip 文本 `[N]`，hover 显示所有 key=value（JSON-like） |
+| `link` | `url` | `title` | chip 显示 emoji + 完整 source 名字（详见 ref-chip-label-and-icon.md §1）；点击 chip → 新窗口打开 url；hover popover 只含 URL |
+| `memory` | `key`, `snippet` | `title` | chip 显示 emoji + 完整字段；popover 显示 key + snippet |
+| `snippet` | `from`, `content` | — | chip 显示 emoji + from；popover 显示 from + content |
+| `tool` | `tool_name`, `call_id` | `args`, `result_summary` | chip 显示 emoji + tool_name；popover 显示 key-value 网格 |
+| `other` | 任意 | 任意 | chip 显示 emoji ❓ + 第一个 attr；popover 显示所有 key=value（JSON-like） |
 
 未识别的 type 走 `other` 路径：把所有 key=value 拼成 JSON 显示。**前端不做枚举锁定**，LLM 可以加自定义 type，prompt 控制枚举；解析层只接受 type 是 string。
+
+**chip 文本 + icon 策略** 单独抽到 `spec/requirements/ref-chip-label-and-icon.md`（v5 引入：完整字段 + emoji icon + popover 简化）。本 spec 协议层（token 语法 / id / 必填字段）不变。
 
 ### 2.4 编号 `id`
 
@@ -130,16 +132,20 @@ function parseRefBody(body: string): Ref | null {
       data-ref-id="1"
       data-ref-type="link"
       tabindex="0">
-  <span class="ref-num">[1]</span>
+  <span class="ref-icon-emoji">🔗</span>
+  <span class="ref-num">Playwright Trace Viewer</span>
 </span>
 <div class="ref-popover" data-ref-id="1">
-  <!-- popover 内容按 type 渲染：link → "title · url" + clickable -->
-  <!-- memory → "key · snippet" -->
-  <!-- snippet → "from · content" -->
-  <!-- tool → "tool_name · args · result_summary" -->
+  <!-- popover 内容按 type 渲染：link → URL section -->
+  <!-- memory → Key + Snippet section -->
+  <!-- snippet → From + Content section -->
+  <!-- tool → key-value 网格 -->
   <!-- other → JSON dump -->
+  <!-- v5：不再包含 type badge section 和 Title section（chip 已展示） -->
 </div>
 ```
+
+**chip 文本 + emoji icon 详见** `spec/requirements/ref-chip-label-and-icon.md`（v5）。
 
 **popover 不在 chip 里嵌套**（避免 hover 边界闪烁）：跟 chip 同一个父容器，popover 默认 `display: none`，JS 监听 hover/focus 时显示。
 

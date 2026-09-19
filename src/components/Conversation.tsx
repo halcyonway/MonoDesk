@@ -168,6 +168,23 @@ function bashSummary(args: string | undefined): string | null {
   return c.length > MAX ? c.slice(0, MAX) + "…" : c;
 }
 
+// skill_load tool：args 是 JSON，从中提取 `name` 字段（要加载的 skill 名）。
+// 用户体验上希望知道「加了哪个 skill」，跟 bash 的 target 同位：head 显示
+// skill name，args 折叠 body 里仍然能展开看到完整 JSON。长度限制 30 字符。
+function skillLoadSummary(args: string | undefined): string | null {
+  if (!args) return null;
+  let obj: { name?: unknown } | null = null;
+  try {
+    obj = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  const n = typeof obj?.name === "string" ? obj.name.trim() : "";
+  if (!n) return null;
+  const MAX = 30;
+  return n.length > MAX ? n.slice(0, MAX) + "…" : n;
+}
+
 function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
   const [elapsed, setElapsed] = useState(0);
   const running = child.state === "running";
@@ -206,6 +223,12 @@ function ToolBlock({ child }: { child: Extract<Child, { kind: "tool" }> }) {
             其它 tool 不渲染。child.args 全量保留在折叠 body 里，head 只显示 target。 */}
         {child.name === "bash" && (() => {
           const summary = bashSummary(child.args);
+          return summary ? <span className="t-summary" title={summary}>{summary}</span> : null;
+        })()}
+        {/* skill_load tool：head 显示加载的 skill name（"SKILL_LOAD <name>"），
+            跟 bash target 同位。args 全量保留在折叠 body 里。 */}
+        {child.name === "skill_load" && (() => {
+          const summary = skillLoadSummary(child.args);
           return summary ? <span className="t-summary" title={summary}>{summary}</span> : null;
         })()}
         {/* #polish: 删除 t-args 显示 —— args 在 mono 截断显示里看不出有用信息（fork_task
@@ -459,11 +482,51 @@ export function Conversation({
   }, [engine, sessionKey]);
 
   // evidence chain ref chip → popover 触发（spec §3.5）。
-  // delegation 监听 #conversation-wrap：mouseenter/leave/focusin/out + click。
+  // delegation 监听 #conversation-wrap：mouseover/out + click + focusin/out。
   // 不用全局 document —— Conversation 是 ref chip 的唯一宿主，
   // 缩小到容器监听便于 cleanup + 不污染其他组件。
-  // popover 位置：在 chip 下方 4px，靠 chip.getBoundingClientRect() 算到
-  // wrap 的相对坐标 + position: absolute。hide 时清 inline style + 移除 .visible。
+  //
+  // mouseover/out 用 relatedTarget 判断「鼠标从 chip 移到 popover」场景：
+  //   - 离开 chip → 鼠标进入 popover：relatedTarget 在 popover 内 → 不 hide
+  //   - 离开 popover → 鼠标去 chip：relatedTarget 是 chip → 不 hide
+  //   - 离开 chip/popover → 去其它地方：hide
+  // 这样用户可以「hover chip 看到 preview → 鼠标移到 preview card 上点 Open
+  // 跳转」，preview card 不会因为鼠标离开 chip 就消失。
+  //
+  // click：
+  //   - link type chip 是 <a>：浏览器默认行为（新窗口打开 url），不阻止
+  //   - 其它 type chip：toggle popover（移动端 / 触屏 / click-to-pin）
+  //
+  // img error delegation（favicon fallback，Image 61）：
+  //   Google s2 服务对小众站 / 内网站返回 204；网站直接 /favicon.ico 通常有。
+  //   链：Google → site /favicon.ico → 灰色圆点（彻底失败）。
+  //   img error 事件不冒泡，必须 capture 阶段 + 数据属性驱动 fallback。
+  const onImgError = (e: Event) => {
+    const img = e.target as HTMLImageElement | null;
+    if (!img || !img.classList.contains("ref-pop-favicon")) return;
+    const stage = img.getAttribute("data-favicon-stage") || "google";
+    if (stage === "google") {
+      // 第二阶段：尝试站点 /favicon.ico
+      const domain = img.getAttribute("data-favicon-domain");
+      if (!domain) {
+        img.replaceWith(makeFallbackDot());
+        return;
+      }
+      img.setAttribute("data-favicon-stage", "site");
+      img.src = `https://${domain}/favicon.ico`;
+    } else {
+      // 第二阶段也失败：换成灰色圆点占位
+      img.replaceWith(makeFallbackDot());
+    }
+  };
+  const makeFallbackDot = (): HTMLElement => {
+    const span = document.createElement("span");
+    span.className = "ref-pop-favicon ref-pop-favicon-fallback";
+    span.setAttribute("aria-hidden", "true");
+    span.textContent = "·";
+    return span;
+  };
+
   useEffect(() => {
     const wrap = scrollRef.current?.parentElement; // #conversation-wrap
     if (!wrap) return;
@@ -472,77 +535,129 @@ export function Conversation({
       const el = target as Element | null;
       return el && el.closest ? el.closest(".ref-chip") : null;
     };
-
-    const showPopover = (chip: HTMLElement) => {
-      const pop = wrap.querySelector(
+    const findPopover = (target: EventTarget | null): HTMLElement | null => {
+      const el = target as Element | null;
+      return el && el.closest ? el.closest(".ref-popover") : null;
+    };
+    // chip / popover 配对：chip.data-ref-id → 同 id 的 popover
+    const popoverOf = (chip: HTMLElement): HTMLElement | null =>
+      wrap.querySelector(
         `.ref-popover[data-ref-id="${chip.getAttribute("data-ref-id")}"]`,
       ) as HTMLElement | null;
+    // popover → chip：找同一个 wrap 里的同 id chip
+    const chipOf = (pop: HTMLElement): HTMLElement | null =>
+      wrap.querySelector(
+        `.ref-chip[data-ref-id="${pop.getAttribute("data-ref-id")}"]`,
+      ) as HTMLElement | null;
+
+    const showPopover = (chip: HTMLElement) => {
+      const pop = popoverOf(chip);
       if (!pop) return;
       const c = chip.getBoundingClientRect();
       const w = wrap.getBoundingClientRect();
-      // 在 chip 下方 4px；左对齐到 chip，限制在 wrap 范围内
-      const left = Math.max(0, Math.min(c.left - w.left, w.width - pop.offsetWidth - 4));
-      pop.style.top = `${c.bottom - w.top + 4}px`;
+      // chip 下方 6px（给 ::before 箭头留 7px 高度）；箭头水平居中指向 chip 文字中心
+      const chipCenter = c.left + c.width / 2 - w.left;
+      const left = Math.max(0, Math.min(chipCenter, w.width - pop.offsetWidth));
+      pop.style.top = `${c.bottom - w.top + 6}px`;
       pop.style.left = `${left}px`;
-      pop.classList.add("visible");
+      pop.classList.add("visible", "arrow-center");
     };
     const hidePopover = (chip: HTMLElement | null) => {
       if (!chip) return;
-      const pop = wrap.querySelector(
-        `.ref-popover[data-ref-id="${chip.getAttribute("data-ref-id")}"]`,
-      ) as HTMLElement | null;
+      const pop = popoverOf(chip);
       if (!pop) return;
-      pop.classList.remove("visible");
+      pop.classList.remove("visible", "arrow-center");
       pop.style.top = "";
       pop.style.left = "";
     };
     const togglePopover = (chip: HTMLElement) => {
-      const pop = wrap.querySelector(
-        `.ref-popover[data-ref-id="${chip.getAttribute("data-ref-id")}"]`,
-      ) as HTMLElement | null;
+      const pop = popoverOf(chip);
       if (!pop) return;
       if (pop.classList.contains("visible")) hidePopover(chip);
       else showPopover(chip);
     };
 
-    const onMouseEnter = (e: Event) => {
+    const onMouseOver = (e: MouseEvent) => {
       const chip = findChip(e.target);
       if (chip) showPopover(chip);
     };
-    const onMouseLeave = (e: Event) => {
-      // 只在真正离开 chip 时收起 —— mouseleave 在子节点移动时不冒泡
-      // 触发（closest 找不到 chip），自然不会误收起。
+    const onMouseOut = (e: MouseEvent) => {
+      // mouseout 比 mouseleave 更灵活：relatedTarget 告诉「鼠标去哪儿了」。
+      // 离开 chip → 进 popover：不 hide（让用户能继续 hover popover 操作）
+      // 离开 popover → 进 chip：不 hide
+      // 离开 chip/popover → 去其它地方：hide
+      const related = e.relatedTarget as Element | null;
+      if (!related) {
+        // 鼠标离开 wrap（去标题栏等）→ hide 所有
+        const chip = findChip(e.target);
+        if (chip) hidePopover(chip);
+        return;
+      }
+      if (related.closest(".ref-chip") || related.closest(".ref-popover")) return;
       const chip = findChip(e.target);
+      const pop = findPopover(e.target);
       if (chip) hidePopover(chip);
+      else if (pop) hidePopover(chipOf(pop));
     };
+    // Tauri 环境检测：Tauri webview 全局注入 `__TAURI_INTERNALS__`，
+    // browser dev mode (`npm run dev`) 不存在。详见
+    // spec/requirements/ref-chip-external-open.md §2.1。
+    const isTauri =
+      typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
     const onClick = (e: Event) => {
       const chip = findChip(e.target);
-      // 移动端 / 触屏 → 点击展开；桌面 hover 已显示 → 点击可固定 / 取消固定
-      // 简化：始终 toggle（hover 离开前不会自动收起已 toggle 的 popover，
-      // 但下个 chip hover 进来会重定位覆盖；可接受）。
-      if (chip) togglePopover(chip);
+      if (!chip) return;
+      // link type chip 是 <a>，统一在 JS 里主动 open（不依赖 native <a> click）：
+      //   - Browser：window.open(href, "_blank", "noopener,noreferrer") → 新 tab
+      //   - Tauri：@tauri-apps/plugin-shell.open(href) → 系统默认浏览器
+      // preventDefault 是为了避免 chip 文字被 selected（Image 59 反馈：<a>
+      // native click 会触发 selection，造成"选中态闪烁"）。
+      if (chip.tagName.toLowerCase() === "a") {
+        const href = chip.getAttribute("href");
+        if (!href) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (isTauri) {
+          // 动态 import 避免 browser 打包时把 plugin-shell 打进 main bundle
+          // （browser 用 window.open，TAURI 模式才需要 plugin-shell 的 open）。
+          // /* @vite-ignore */ 让 vite build / vitest 不静态解析（保证未来
+          // 拆 Tauri build 时不报"module not found"）。
+          import(/* @vite-ignore */ "@tauri-apps/plugin-shell").then(({ open }: { open: (url: string) => Promise<void> }) => open(href));
+        } else {
+          window.open(href, "_blank", "noopener,noreferrer");
+        }
+        hidePopover(chip);
+        return;
+      }
+      // 非 link type chip：toggle popover（移动端 tap / 桌面 click-to-pin）
+      togglePopover(chip);
     };
     const onFocusIn = (e: Event) => {
       const chip = findChip(e.target);
       if (chip) showPopover(chip);
     };
-    const onFocusOut = (e: Event) => {
+    const onFocusOut = (e: FocusEvent) => {
       const chip = findChip(e.target);
-      if (chip) hidePopover(chip);
+      if (!chip) return;
+      const related = e.relatedTarget as Element | null;
+      if (related && related.closest(".ref-popover")) return;
+      hidePopover(chip);
     };
 
-    // capture phase：mouseenter/leave 不冒泡，必须 capture 才能可靠监听
-    wrap.addEventListener("mouseenter", onMouseEnter, true);
-    wrap.addEventListener("mouseleave", onMouseLeave, true);
+    wrap.addEventListener("mouseover", onMouseOver);
+    wrap.addEventListener("mouseout", onMouseOut);
     wrap.addEventListener("focusin", onFocusIn);
     wrap.addEventListener("focusout", onFocusOut);
     wrap.addEventListener("click", onClick);
+    wrap.addEventListener("error", onImgError, true); // capture: img error 不冒泡
     return () => {
-      wrap.removeEventListener("mouseenter", onMouseEnter, true);
-      wrap.removeEventListener("mouseleave", onMouseLeave, true);
+      wrap.removeEventListener("mouseover", onMouseOver);
+      wrap.removeEventListener("mouseout", onMouseOut);
       wrap.removeEventListener("focusin", onFocusIn);
       wrap.removeEventListener("focusout", onFocusOut);
       wrap.removeEventListener("click", onClick);
+      wrap.removeEventListener("error", onImgError, true);
     };
   }, []);
 

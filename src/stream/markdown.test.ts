@@ -59,36 +59,36 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
   // 替换成 .ref-chip + .ref-popover HTML。
 
   it("renders single ref token inline", () => {
-    const out = renderMarkdown(`text [[ref id=1 type=link url="https://x.com" title="T"]] more`);
+    const out = renderMarkdown(`text [[ref type=link url="https://x.com" title="T"]] more`);
     expect(out).toContain('class="ref-chip"');
+    // v5.1: data-ref-id 由 replaceRefs 分配的 seq（单 ref = 1）
     expect(out).toContain('data-ref-id="1"');
     expect(out).toContain('data-ref-type="link"');
     expect(out).toContain('class="ref-popover"');
-    // v5: link popover 只剩 URL section（无 type badge / 无 Title section）
-    expect(out).not.toContain('class="ref-type-badge"');
+    // v5.1 popover: type 行 + content section（link 无 desc → 只有 type 行）
+    expect(out).toContain('class="ref-type-badge"');
     expect(out).toContain('class="ref-pop-section"');
-    expect(out).toContain('class="ref-url-display"');
-    expect(out).toContain('class="ref-url-text"');
-    // URL section 内部仍有 label / value 容器
-    expect(out).toContain('class="ref-pop-label"');
-    expect(out).toContain('class="ref-pop-value"');
+    // 不再含 URL section / favicon（v5.1 删了，URL 走 <a> native 跳转）
+    expect(out).not.toContain('class="ref-url-display"');
+    expect(out).not.toContain('class="ref-pop-favicon"');
     // 无 Open 按钮：跳转走点击 chip 本身
     expect(out).not.toContain('class="ref-pop-open"');
     expect(out).not.toContain("[[ref");
   });
 
   it("renders multiple refs in one line", () => {
-    const src = `A [[ref id=1 type=link url="https://a" title="A"]] B [[ref id=2 type=memory key="k" snippet="s"]]`;
+    const src = `A [[ref type=link url="https://a" title="A"]] B [[ref type=memory key="k" snippet="s"]]`;
     const out = renderMarkdown(src);
     expect(out.match(/class="ref-chip"/g)?.length).toBe(2);
     expect(out.match(/class="ref-popover"/g)?.length).toBe(2);
+    // seq 顺序：1, 2（不依赖 LLM emit 的 id 字段，v5.1 删了）
     expect(out).toContain('data-ref-id="1"');
     expect(out).toContain('data-ref-id="2"');
   });
 
   it("ref token survives inline markdown neighbors", () => {
     const out = renderMarkdown(
-      `**bold** [[ref id=1 type=link url="https://x" title="T"]] **end**`,
+      `**bold** [[ref type=link url="https://x" title="T"]] **end**`,
     );
     expect(out).toContain("<strong>bold</strong>");
     expect(out).toContain('class="ref-chip"');
@@ -97,7 +97,7 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
 
   it("ref popover content is escaped (attrs contain < > &)", () => {
     const out = renderMarkdown(
-      `[[ref id=1 type=memory key="<script>" snippet="a&b"]]`,
+      `[[ref type=memory key="<script>" snippet="a&b"]]`,
     );
     expect(out).toContain("&lt;script&gt;");
     expect(out).toContain("a&amp;b");
@@ -105,45 +105,47 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     expect(out).not.toMatch(/<script>/);
   });
 
-  it("ref token with parse failure (missing id) falls back to plain text", () => {
-    const out = renderMarkdown(`text [[ref type=link url="x"]] more`);
-    expect(out).toContain("[[ref type=link url=\"x\"]]");
+  it("ref token with parse failure (missing type) falls back to plain text", () => {
+    // v5.1: parse 失败唯一条件是 type 缺失（id 缺失已不算失败）
+    const out = renderMarkdown(`text [[ref url="x"]] more`);
+    expect(out).toContain("[[ref url=\"x\"]]");
     expect(out).not.toContain('class="ref-chip"');
   });
 
   it("ref token inside code block is NOT parsed (code block content is opaque)", () => {
-    const src = "```\n[[ref id=1 type=link url=\"https://x\"]]\n```";
+    const src = "```\n[[ref type=link url=\"https://x\"]]\n```";
     const out = renderMarkdown(src);
     // code 块原样保留 token 文本
-    expect(out).toContain("[[ref id=1 type=link");
+    expect(out).toContain("[[ref type=link");
     expect(out).not.toContain('class="ref-chip"');
   });
 
-  it("ref chip label uses full field (no longer truncated) — fallback to key when no title", () => {
-    const out = renderMarkdown(`[[ref id=42 type=memory key="k" snippet="s"]]`);
-    // v5: memory 没填 title → fallback 到完整 key = "k"（替代旧的 [42] 数字；
+  it("ref chip label uses full field (fallback to key when no title)", () => {
+    const out = renderMarkdown(`[[ref type=memory key="k" snippet="s"]]`);
+    // v5.1: memory 没填 title → fallback 到完整 key = "k"（替代 v4 的 [N] 数字；
     // 不再截短到末段，但单段 path 的 fallback 恰好就是末段）。完整字段 + emoji
-    // 路径见 ref-parser.test.ts 30-37。
+    // 路径见 ref-parser.test.ts 27-33。
     expect(out).toContain("<span class=\"ref-num\">k</span>");
-    expect(out).toContain('data-ref-id="42"');
+    // data-ref-id 由 seq 分配（单 ref = 1）
+    expect(out).toContain('data-ref-id="1"');
   });
 
   it("renders all 4 ref types (link / memory / snippet / tool)", () => {
-    // v5: 每种 type 都出 chip + popover，popover 都不再含 type badge section
+    // v5.1: 每种 type 都出 chip + popover；popover 都含 type badge + 各 type content section
     const src = [
-      `link [[ref id=1 type=link url="https://x.com" title="L"]]`,
-      `memory [[ref id=2 type=memory key="k" snippet="s"]]`,
-      `snippet [[ref id=3 type=snippet from="f" content="c"]]`,
-      `tool [[ref id=4 type=tool tool_name="n" call_id="c" result_summary="r"]]`,
+      `link [[ref type=link url="https://x.com" title="L"]]`,
+      `memory [[ref type=memory key="k" snippet="s"]]`,
+      `snippet [[ref type=snippet from="f" content="c"]]`,
+      `tool [[ref type=tool tool_name="n" call_id="c" result_summary="r"]]`,
     ].join(" ");
     const out = renderMarkdown(src);
     // 4 个 chip
     expect(out.match(/class="ref-chip"/g)?.length).toBe(4);
     // 4 个 popover
     expect(out.match(/class="ref-popover"/g)?.length).toBe(4);
-    // v5: 没有 type badge section（emoji 已在 chip 里）
-    expect(out).not.toContain('class="ref-type-badge"');
-    // 每个 popover 至少 1 个 section（URL / Key+Snippet / From+Content / kv grid）
+    // v5.1: 4 个 type badge（每 popover 顶部）
+    expect(out.match(/class="ref-type-badge"/g)?.length).toBe(4);
+    // 每个 popover 至少 1 个 content section（type badge section + content section）
     expect(out.match(/class="ref-pop-section"/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
@@ -153,7 +155,7 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     const src = [
       `- bullet text`,
       ``,
-      `[[ref id=1 type=link url="https://x.com" title="L"]]`,
+      `[[ref type=link url="https://x.com" title="L"]]`,
     ].join("\n");
     const out = renderMarkdown(src);
     // ref chip 不能被 <p> 包裹
@@ -177,7 +179,7 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     const src = [
       `前面一段。`,
       ``,
-      `[[ref id=2 type=link url="https://github.com" title="G"]]`,
+      `[[ref type=link url="https://github.com" title="G"]]`,
       ``,
       `后面一段。`,
     ].join("\n");
@@ -195,7 +197,7 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     const src = [
       `上传后需要等待 Apple 处理，处理完成后会出现在 TestFlight 页面。`,
       ``,
-      `[[ref id=2 type=link url="https://developer.apple.com/testflight" title="Apple 上传说明"]]`,
+      `[[ref type=link url="https://developer.apple.com/testflight" title="Apple 上传说明"]]`,
     ].join("\n");
     const out = renderMarkdown(src);
     // 关键断言：ref chip 必须出现在「页面。」之后的同一个 <p> 内部，

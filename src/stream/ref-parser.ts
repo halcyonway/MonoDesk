@@ -1,20 +1,21 @@
-// [[ref id=N type=... ...]] token 解析 + 渲染。
+// [[ref type=... ...]] token 解析 + 渲染。
 //
-// 协议见 spec/requirements/evidence-chain.md：
-// - 形态：`[[ref id=N type=TYPE key=value ...]]`
-// - id 必须正整数；type 任意 string（未识别走 other）
+// 协议见 spec/requirements/evidence-chain.md（v5.1）：
+// - 形态：`[[ref type=TYPE key=value ...]]`
+// - type 任意 string（未识别走 other）；id 字段已删除（LLM 不需要递增计数）
+// - 旧 token 含 `id=N` 时静默忽略，不报错（向后兼容）
 // - parse 失败 → null，调用方原样保留 token 当纯文本
 //
 // 渲染层独立：parser 只产出结构化 Ref，renderMarkdown 负责把它转成 innerHTML
 // 字符串（chip + popover）。
 
 export interface Ref {
-  id: number;
+  // id 已删除（v5.1）：chip ↔ popover 配对改用 replaceRefs 分配的 seq
   type: string;
   attrs: Record<string, string>;
 }
 
-// 提取 [[ref ...]] token 的 body（id=1 type=link url="x" title="t"）。
+// 提取 [[ref ...]] token 的 body（type=link url="x" title="t" content="c"）。
 // non-greedy，停在第一个 ]]。整段 raw 保留作为 fallback（parse 失败时）。
 const REF_RE = /\[\[ref\s+([\s\S]+?)\]\]/g;
 
@@ -36,26 +37,29 @@ export function parseRefBody(body: string): Ref | null {
     // m[1]=key, m[3]=双引号 content, m[4]=单引号 content, m[2]/m[5]=fallback（含引号 / bare）
     map[m[1]] = m[3] ?? m[4] ?? m[5] ?? m[2] ?? "";
   }
-  if (!("id" in map) || !("type" in map)) return null;
-  const id = Number(map.id);
-  if (!Number.isInteger(id) || id < 1) return null;
+  // v5.1：type= 是唯一必填字段；id= 静默忽略（LLM 旧 token 兼容）
+  if (!("type" in map)) return null;
   const type = map.type;
-  delete map.id;
   delete map.type;
-  return { id, type, attrs: map };
+  // 兼容：旧 token 含 id=N 时不进 attrs、不进 Ref（silent ignore）
+  delete map.id;
+  return { type, attrs: map };
 }
 
-// 扫描 src，把所有 [[ref ...]] token 替换成 render(ref) 返回的字符串。
+// 扫描 src，把所有 [[ref ...]] token 替换成 render(ref, seq) 返回的字符串。
+// seq：渲染时按出现顺序分配 chip 序号（1-based），用作 chip ↔ popover 配对 key（HTML data-ref-id）。
 // 解析失败 → 保留 raw token 当 fallback（不抛错，跟 markdown 容错一致）。
 export function replaceRefs(
   src: string,
-  render: (ref: Ref, raw: string) => string,
+  render: (ref: Ref, seq: number, raw: string) => string,
 ): string {
   REF_RE.lastIndex = 0;
+  let seq = 0;
   return src.replace(REF_RE, (_m, body: string) => {
     const ref = parseRefBody(body);
     if (!ref) return _m;
-    return render(ref, _m);
+    seq++;
+    return render(ref, seq, _m);
   });
 }
 
@@ -72,14 +76,16 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
-// popover 内容按 type 渲染。
-// spec: spec/ui/ref-chip-popover-v5.html (v5: emoji chip + 简化 popover)
-//   - 去掉 type badge section（emoji 已在 chip 里）
-//   - 去掉 chip 已展示的 Title section（title 跟 chip 重复）
-//   - 只保留 chip 没展示的字段：URL / snippet / kv grid
+// popover 内容按 type 渲染（v5.1）。
+// spec: spec/requirements/ref-chip-label-and-icon.md §4
+//   - type 行（v4 type badge 的 emoji + label 形态，圆角胶囊 + 4 色）
+//   - content section（chip 没展示的详情字段）
+//   - 不渲染 URL section（URL 走 <a target="_blank"> 原生跳转 + Tauri 走
+//     plugin-shell，避免 popover 重复）
 // 所有字段都 he() 转义；URL 额外走 safeUrl() 过滤危险 scheme。
 function renderPopover(ref: Ref): string {
   const a = ref.attrs;
+  const typeBadge = renderTypeBadge(ref.type);
 
   // section 行：包含 label + value，底部分隔线
   const section = (label: string, value: string) =>
@@ -88,53 +94,40 @@ function renderPopover(ref: Ref): string {
     `<div class="ref-pop-value">${value}</div>` +
     `</div>`;
 
+  let contentHtml = "";
   switch (ref.type) {
     case "link": {
-      const url = a.url ? (safeUrl(a.url) ?? "") : "";
-      const domain = a.url ? extractDomain(a.url) : "";
-      const favicon = domain ? getFaviconUrl(domain) : "";
-
-      // URL section: favicon + mono 字体 URL。title / desc 都已在 chip 里展示，
-      // v5 不再在 popover 重复 Title section（避免字符级断行，参考 Image 60）。
-      const faviconHtml = favicon
-        ? `<img class="ref-pop-favicon" src="${he(favicon)}" alt="" loading="lazy" data-favicon-stage="google" data-favicon-domain="${he(domain)}" />`
-        : `<span class="ref-pop-favicon-fallback" aria-hidden="true">·</span>`;
-      return section(
-        "URL",
-        `<div class="ref-url-display">` +
-          `<div class="ref-pop-favicon-wrap">${faviconHtml}</div>` +
-          `<span class="ref-url-text">${he(url)}</span>` +
-        `</div>`,
-      );
+      // v5.1：只取 desc（不渲染 URL section）
+      const descRaw = a.desc || "";
+      const descIsUrl = /^(https?|mailto):/i.test(descRaw);
+      const desc = !descRaw || descIsUrl ? "" : he(truncate(descRaw, 240));
+      if (desc) contentHtml = section("Content", desc);
+      break;
     }
     case "memory": {
-      const key = he(a.key || "");
-      const snippet = he(truncate(a.snippet || "", 160));
-      let html = "";
-      if (key) html += section("Key", `<span class="ref-pop-mono">${key}</span>`);
+      // v5.1：只取 snippet（不再单独渲染 Key section —— key 已在 chip fallback 路径里）
+      const snippet = he(truncate(a.snippet || "", 240));
       if (snippet) {
-        html += section(
+        contentHtml = section(
           "Snippet",
           `<div class="ref-content-preview">${snippet}</div>`,
         );
       }
-      return html;
+      break;
     }
     case "snippet": {
-      const from = he(a.from || "");
-      const content = he(truncate(a.content || "", 200));
-      let html = "";
-      if (from) html += section("From", from);
+      // v5.1：只取 content（不再单独渲染 From section）
+      const content = he(truncate(a.content || "", 240));
       if (content) {
-        html += section(
+        contentHtml = section(
           "Content",
           `<div class="ref-content-preview">${content}</div>`,
         );
       }
-      return html;
+      break;
     }
     case "tool": {
-      // key-value grid
+      // kv 网格：tool_name / call_id / result_summary
       const rows: string[] = [];
       if (a.tool_name) {
         rows.push(`<div class="ref-pop-kv-key">Tool</div><div class="ref-pop-kv-val">${he(a.tool_name)}</div>`);
@@ -148,33 +141,62 @@ function renderPopover(ref: Ref): string {
       const grid = rows.length
         ? `<div class="ref-pop-kv">${rows.join("")}</div>`
         : "";
-      return `<div class="ref-pop-section">${grid}</div>`;
+      if (grid) {
+        contentHtml = `<div class="ref-pop-section">${grid}</div>`;
+      }
+      break;
     }
     default: {
+      // other：JSON dump（兜底）
       const json = he(JSON.stringify(a));
-      return (
+      contentHtml =
         `<div class="ref-pop-section">` +
         `<pre class="ref-pop-json">${json}</pre>` +
-        `</div>`
-      );
+        `</div>`;
+      break;
     }
   }
+  return typeBadge + contentHtml;
 }
 
-// chip 用的 type icon（inline emoji 字符，v5 引入）。
+// chip / type badge 共享的 emoji 映射表（v5 引入）。
 // v4 是 5 种 SVG icon（链/笔记本/气泡/扳手/问号），统一在小尺寸下视觉参差；
 // v5 改 emoji 字符 + CSS 字体回退链（Apple Color Emoji / Segoe UI Emoji /
 // Noto Color Emoji / EmojiOne Color / sans-serif），跨 type 视觉一致。
-// （短文本 chip：font-size 11px sans，emoji 11px 视觉对齐 baseline）
+// （chip / type badge 都复用同一组 emoji，保证视觉锚点一致）
 const CHIP_EMOJI: Record<string, string> = {
   link: "🔗",
   memory: "📒",
   snippet: "💬",
   tool: "🔧",
 };
+
+// chip 用的 type icon：emoji 字符包 <span class="ref-icon-emoji">。
 function renderChipIcon(type: string): string {
   const e = CHIP_EMOJI[type] ?? "❓";
   return `<span class="ref-icon-emoji" aria-hidden="true">${e}</span>`;
+}
+
+// type badge：圆角胶囊（emoji + 小写 label），4 色对应 4 种 type。
+// v5.1 恢复（commit 0901a62 删了）。v4 用 SVG icon + JS inline style 注入 bg/color；
+// v5.1 改 emoji 字符 + 同样 JS 注入（保持 4 色 tint，hover 仍可见对比）。
+const TYPE_BADGE: Record<string, { label: string; bg: string; color: string }> = {
+  link:    { label: "link",    bg: "#e8f1ee", color: "#2d7a64" },
+  memory:  { label: "memory",  bg: "#f0e8fc", color: "#7a4db8" },
+  snippet: { label: "snippet", bg: "#e8f4e8", color: "#3d8b40" },
+  tool:    { label: "tool",    bg: "#fef3e2", color: "#9a5a10" },
+};
+function renderTypeBadge(type: string): string {
+  const meta = TYPE_BADGE[type] ?? { label: type.toLowerCase(), bg: "#f0f0f0", color: "#666" };
+  const emoji = CHIP_EMOJI[type] ?? "❓";
+  return (
+    `<div class="ref-pop-section">` +
+    `<span class="ref-type-badge" style="background:${meta.bg};color:${meta.color};">` +
+    `<span class="ref-icon-emoji" aria-hidden="true">${emoji}</span>` +
+    `${meta.label}` +
+    `</span>` +
+    `</div>`
+  );
 }
 
 // chip 文本：完整字段 + fallback（v5 改）。
@@ -235,19 +257,22 @@ function getFaviconUrl(domain: string): string {
   return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=32`;
 }
 
-// chip 文本：渲染 inline 短标签（替代 [N] 数字）。
-// link type 整个 chip 包成 <a>：点击直接跳转，hover 才弹 preview card。
-// 其它 type chip 保持纯 span（hover/click 走 popover）。
+// chip HTML 渲染：link type 包 <a>（browser 走 native click + Tauri 走
+// plugin-shell，详见 spec/requirements/ref-chip-external-open.md），其它
+// type 包 <span>（hover/click 弹 popover）。
 //
-// 用 <sup>（脚注）形态天然 inline-first，baseline 自动抬升跟文字对齐。
-export function renderRefChip(ref: Ref): string {
+// `seq` 是 replaceRefs 分配的渲染顺序号，用作 chip ↔ popover 配对 key
+// （HTML data-ref-id）。v5.1 之前这里用 LLM emit 的 id=N；删除 id 后改成 seq。
+//
+// chip 形态：inline emoji + 完整字段（详见 spec/requirements/ref-chip-label-and-icon.md）
+export function renderRefChip(ref: Ref, seq: number): string {
   const popover = renderPopover(ref);
   const icon = renderChipIcon(ref.type);
   const label = he(shortLabel(ref));
   const inner = `${icon}<span class="ref-num">${label}</span>`;
   const chipOpen =
     ref.type === "link" && ref.attrs.url && safeUrl(ref.attrs.url)
-      ? `<a class="ref-chip" data-ref-id="${ref.id}" data-ref-type="${he(ref.type)}" tabindex="0" href="${he(ref.attrs.url)}" target="_blank" rel="noopener">${inner}</a>`
-      : `<span class="ref-chip" data-ref-id="${ref.id}" data-ref-type="${he(ref.type)}" tabindex="0">${inner}</span>`;
-  return chipOpen + `<div class="ref-popover" data-ref-id="${ref.id}">${popover}</div>`;
+      ? `<a class="ref-chip" data-ref-id="${seq}" data-ref-type="${he(ref.type)}" tabindex="0" href="${he(ref.attrs.url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
+      : `<span class="ref-chip" data-ref-id="${seq}" data-ref-type="${he(ref.type)}" tabindex="0">${inner}</span>`;
+  return chipOpen + `<div class="ref-popover" data-ref-id="${seq}">${popover}</div>`;
 }

@@ -321,6 +321,7 @@ describe("Conversation ToolBlock error body", () => {
     state: "running" | "done";
     result?: ToolChild["result"];
     latencyMs?: number;
+    toolArgs?: string;
   }): Msg {
     return {
       id: "a-tool",
@@ -331,7 +332,7 @@ describe("Conversation ToolBlock error body", () => {
           id: "c-tool",
           kind: "tool",
           name: args.name,
-          args: "{}",
+          args: args.toolArgs ?? "{}",
           state: args.state,
           result: args.result,
           latencyMs: args.latencyMs,
@@ -479,6 +480,98 @@ describe("Conversation ToolBlock error body", () => {
     expect(container.querySelector(".stderr")).toBeFalsy();
     expect(container.querySelector(".t-exit")?.textContent).toBe("exit -1");
   });
+
+  it("skill_load tool head shows loaded skill name (Image 62)", () => {
+    // Image 62 反馈：SKILL_LOAD 之前只显示名字本身，看不出加载了哪个 skill。
+    // 修法：head 里展示 args.name（≤30 字截断），跟 bash target 同位。
+    const engine = makeEngine();
+    const msg = toolMsg({
+      name: "skill_load",
+      state: "done",
+      toolArgs: '{"name":"mono_search"}',
+      result: {
+        call_id: "c1",
+        status: "ok",
+        stdout: "ok",
+        stderr: "",
+        exit_code: 0,
+      },
+      latencyMs: 12,
+    });
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, msg]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    // summary 必须包含 skill 名字（共用 .t-summary class，跟 bash target 视觉一致）
+    const summary = container.querySelector(".t-summary");
+    expect(summary).toBeTruthy();
+    expect(summary?.textContent).toBe("mono_search");
+    // tool block 的 label 应该含 skill_load
+    const labels = Array.from(container.querySelectorAll(".label")).map((el) => el.textContent);
+    expect(labels.some((l) => l?.includes("skill_load"))).toBe(true);
+  });
+
+  it("skill_load tool with no name arg does NOT show summary", () => {
+    const engine = makeEngine();
+    const msg = toolMsg({
+      name: "skill_load",
+      state: "done",
+      toolArgs: "{}",
+      result: {
+        call_id: "c1",
+        status: "ok",
+        stdout: "ok",
+        stderr: "",
+        exit_code: 0,
+      },
+      latencyMs: 5,
+    });
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, msg]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelector(".t-summary")).toBeNull();
+  });
+
+  it("skill_load tool with very long name truncates to 30 chars + …", () => {
+    const longName = "a".repeat(60);
+    const engine = makeEngine();
+    const msg = toolMsg({
+      name: "skill_load",
+      state: "done",
+      toolArgs: `{"name":"${longName}"}`,
+      result: {
+        call_id: "c1",
+        status: "ok",
+        stdout: "ok",
+        stderr: "",
+        exit_code: 0,
+      },
+      latencyMs: 3,
+    });
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, msg]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const summary = container.querySelector(".t-summary");
+    expect(summary?.textContent?.length).toBeLessThanOrEqual(31);
+    expect(summary?.textContent?.endsWith("…")).toBe(true);
+  });
 });
 
 describe("Conversation evidence chain ref chip + popover", () => {
@@ -495,7 +588,7 @@ describe("Conversation evidence chain ref chip + popover", () => {
 
   it("renders ref chip + popover when assistant text contains [[ref]] token", () => {
     const engine = makeEngine();
-    const text = `观点 [1] 引用了某来源 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const text = `观点 [1] 引用了某来源 [[ref type=link url="https://x.com" title="T" desc="一句话摘要"]]`;
     const { container } = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}
@@ -507,6 +600,7 @@ describe("Conversation evidence chain ref chip + popover", () => {
     );
     const chip = container.querySelector(".ref-chip");
     expect(chip).toBeTruthy();
+    // v5.1: data-ref-id 由 seq 分配（单 ref = 1）
     expect(chip?.getAttribute("data-ref-id")).toBe("1");
     expect(chip?.getAttribute("data-ref-type")).toBe("link");
     const popover = container.querySelector(".ref-popover");
@@ -515,13 +609,26 @@ describe("Conversation evidence chain ref chip + popover", () => {
     expect(popover?.classList.contains("visible")).toBe(false);
     // raw token 已经被替换走
     expect(container.textContent).not.toContain("[[ref");
+    // v5.1: chip 含完整 title + emoji icon（shortLabel = a.title = "T"）
+    expect(chip?.textContent).toContain("T");
+    expect(chip?.textContent).toContain("🔗");
+    // v5.1 popover: type 行 + content section（desc 字段）
+    const typeBadge = popover?.querySelector(".ref-type-badge");
+    expect(typeBadge).toBeTruthy();
+    expect(typeBadge?.textContent).toContain("link");
+    expect(typeBadge?.textContent).toContain("🔗");
+    expect(popover?.textContent).toContain("一句话摘要");
+    // URL 不再渲染在 popover（v5.1 删了，走 <a> native 跳转）
+    expect(popover?.textContent).not.toContain("https://x.com");
+    expect(popover?.querySelector(".ref-url-display")).toBeNull();
+    expect(popover?.querySelector(".ref-pop-favicon")).toBeNull();
   });
 
   it("popover 初始 display 来自 CSS（默认 hidden，JS hover 才会 .visible）", () => {
     // 不直接读 computed style（jsdom 对 absolute 定位不真实计算），
     // 而是断言 popover 的 .visible 类**不在**初始 class list 里。
     const engine = makeEngine();
-    const text = `观点 [[ref id=1 type=memory key="k" snippet="s"]]`;
+    const text = `观点 [[ref type=memory key="k" snippet="s"]]`;
     const { container } = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}
@@ -539,7 +646,7 @@ describe("Conversation evidence chain ref chip + popover", () => {
     // 监听挂在 #conversation-wrap 上（不是 document 全局），
     // 用 fireEvent 在 chip 元素上派 mouseenter → capture phase 触发监听。
     const engine = makeEngine();
-    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const text = `观点 [[ref type=link url="https://x.com" title="T"]]`;
     const { container } = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}
@@ -557,7 +664,7 @@ describe("Conversation evidence chain ref chip + popover", () => {
 
   it("mouseleave on chip hides popover (removes .visible)", () => {
     const engine = makeEngine();
-    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const text = `观点 [[ref type=link url="https://x.com" title="T"]]`;
     const { container } = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}
@@ -574,9 +681,11 @@ describe("Conversation evidence chain ref chip + popover", () => {
     expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(false);
   });
 
-  it("click on chip toggles popover (mobile / tap)", () => {
+  it("click on non-link chip toggles popover (mobile / tap)", () => {
+    // link type chip 是 <a>，click 走 JS 主动 open（不再 toggle popover）；
+    // 移动端 click toggle 只对非 link type 有意义。
     const engine = makeEngine();
-    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const text = `观点 [[ref type=memory key="k" snippet="s"]]`;
     const { container } = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}
@@ -593,10 +702,66 @@ describe("Conversation evidence chain ref chip + popover", () => {
     expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(false);
   });
 
+  it("click on link chip hides popover + triggers navigation (does NOT toggle)", () => {
+    // v5.1: link chip click → JS 主动 open (browser: window.open, Tauri:
+    // plugin-shell open) + hide popover。不是 toggle，避免 tap → 弹窗+跳转
+    // 双重动作。
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const engine = makeEngine();
+    const text = `观点 [[ref type=link url="https://x.com" title="T"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = container.querySelector(".ref-chip") as HTMLElement;
+    expect(chip.tagName.toLowerCase()).toBe("a");
+    // 先 hover 让 popover visible，然后 click → 应该被 hide（不是 toggle）
+    fireEvent.mouseEnter(chip);
+    expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(true);
+    fireEvent.click(chip);
+    // 主动 open (browser mode 是 window.open)
+    expect(openSpy).toHaveBeenCalled();
+    // 不应 toggle popover：click 后立即 hide
+    expect(container.querySelector(".ref-popover")?.classList.contains("visible")).toBe(false);
+    openSpy.mockRestore();
+  });
+
+  it("click on link chip calls window.open with href + _blank + noopener (browser mode)", () => {
+    // jsdom 不存在 __TAURI_INTERNALS__ → 走 browser 分支
+    // Image 59 反馈：点 chip 后浏览器选中 chip 文字造成「选中态」。
+    // 修法：click handler preventDefault + 主动 window.open，避免 <a> 默认
+    // 行为选中态 + 异步开窗的视觉错位。
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const engine = makeEngine();
+    const text = `观点 [[ref type=link url="https://x.com/x" title="T"]]`;
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, assistantWithText(text)]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const chip = container.querySelector(".ref-chip") as HTMLElement;
+    fireEvent.click(chip);
+    expect(openSpy).toHaveBeenCalled();
+    const call = openSpy.mock.calls[0];
+    expect(call[0]).toBe("https://x.com/x");
+    expect(call[1]).toBe("_blank");
+    expect(call[2]).toContain("noopener");
+    openSpy.mockRestore();
+  });
+
   it("unmount removes popover state (cleanup)", () => {
     // ensure no leaked listeners across mount/unmount — verify by remount and hover.
     const engine = makeEngine();
-    const text = `观点 [[ref id=1 type=link url="https://x.com" title="T"]]`;
+    const text = `观点 [[ref type=link url="https://x.com" title="T"]]`;
     const first = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}
@@ -624,7 +789,7 @@ describe("Conversation evidence chain ref chip + popover", () => {
   it("multiple refs in same msg render multiple chip/popover pairs", () => {
     const engine = makeEngine();
     const text =
-      `A [[ref id=1 type=link url="https://a" title="A"]] B [[ref id=2 type=memory key="k" snippet="s"]]`;
+      `A [[ref type=link url="https://a" title="A"]] B [[ref type=memory key="k" snippet="s"]]`;
     const { container } = render(
       <Conversation
         sessionKey={TEST_SESSION_KEY}

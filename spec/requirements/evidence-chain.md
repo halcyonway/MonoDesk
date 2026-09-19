@@ -18,20 +18,21 @@
 ### 2.1 语法
 
 ```
-[[ref id=N type=TYPE key=value key=value ...]]
+[[ref type=TYPE key=value key=value ...]]
 ```
 
 - 必须以 `[[ref` 起、`]]` 止
-- 至少含 `id=` 和 `type=`
+- 至少含 `type=`
 - 其它 key=value 是 content；不同 type 含义不同（见 §2.3）
+- **v5.1 移除 id= 字段**：LLM 不需要递增计数，渲染时由 parser 按出现顺序分配 `data-ref-id`（从 1 开始）。仍兼容旧的 `id=N` token：parser 静默忽略，不报错。
 
 ### 2.2 内联位置
 
 ref token 嵌在 final answer 文本里，**紧跟被标注的观点之后**：
 
 ```
-MonoX 是 2022 年成立的 AI agent runtime [1]。
-[[ref id=1 type=link url="https://monox.dev/about" title="MonoX 官网 About"]]
+MonoX 是 2022 年成立的 AI agent runtime。
+[[ref type=link url="https://monox.dev/about" title="MonoX 官网 About"]]
 ```
 
 **不是脚注 / 不是文末 references 区块**。这样读者阅读时上下文不被撕开。
@@ -40,21 +41,19 @@ MonoX 是 2022 年成立的 AI agent runtime [1]。
 
 | type | 必填字段 | 可选字段 | 渲染形态 |
 |---|---|---|---|
-| `link` | `url` | `title` | chip 显示 emoji + 完整 source 名字（详见 ref-chip-label-and-icon.md §1）；点击 chip → 新窗口打开 url；hover popover 只含 URL |
-| `memory` | `key`, `snippet` | `title` | chip 显示 emoji + 完整字段；popover 显示 key + snippet |
-| `snippet` | `from`, `content` | — | chip 显示 emoji + from；popover 显示 from + content |
-| `tool` | `tool_name`, `call_id` | `args`, `result_summary` | chip 显示 emoji + tool_name；popover 显示 key-value 网格 |
-| `other` | 任意 | 任意 | chip 显示 emoji ❓ + 第一个 attr；popover 显示所有 key=value（JSON-like） |
+| `link` | `url`, `title`, `content` | — | chip 显示 emoji + `title`；点击 → 新窗口打开 url（browser 走 `<a target="_blank">` native click；Tauri 走 `@tauri-apps/plugin-shell` 的 `open()`）；popover 显示 type 行 + content section（v5.1） |
+| `memory` | `key`, `title`, `snippet` | — | chip 显示 emoji + `title`；popover 显示 type 行 + snippet section |
+| `snippet` | `from`, `title`, `content` | — | chip 显示 emoji + `title`；popover 显示 type 行 + content section |
+| `tool` | `tool_name`, `title`, `result_summary` | `call_id` | chip 显示 emoji + `title`；popover 显示 type 行 + kv 网格 |
+| `other` | 任意 | 任意 | chip 显示 emoji ❓ + 第一个 attr value；popover 显示所有 key=value（JSON-like） |
 
 未识别的 type 走 `other` 路径：把所有 key=value 拼成 JSON 显示。**前端不做枚举锁定**，LLM 可以加自定义 type，prompt 控制枚举；解析层只接受 type 是 string。
 
-**chip 文本 + icon 策略** 单独抽到 `spec/requirements/ref-chip-label-and-icon.md`（v5 引入：完整字段 + emoji icon + popover 简化）。本 spec 协议层（token 语法 / id / 必填字段）不变。
+**chip 文本 + icon 策略** 单独抽到 `spec/requirements/ref-chip-label-and-icon.md`（v5 引入：完整字段 + emoji icon）。**popover 结构 v5.1**：type 行 + content section（见同 spec §4）。
 
-### 2.4 编号 `id`
+### 2.4 ~~编号 `id`~~（v5.1 移除）
 
-- 由 LLM 自增计数（每条 final answer 独立计数，从 1 开始）
-- chip 上显示 `[N]`（N = id）
-- id 在同一 final answer 内**必须唯一**（不强制 LLM 校验，但重复会让 popover 内容混乱）
+> **v5.1 移除**。早期版本要求 LLM 给每个 ref token 自增 `id=N`，但 `id` 在 chip 上没有展示作用（chip 显示 title）、popover 内部也用不上（chip ↔ popover 配对改用渲染顺序号）。删除后 LLM 不需要关心计数。**旧 token 兼容**：parser 看到 `id=N` 静默忽略，不报错。
 
 ### 2.5 不允许的 token
 
@@ -70,7 +69,7 @@ MonoX 是 2022 年成立的 AI agent runtime [1]。
 
 ```ts
 // 1) ref token pre-pass（必须早于 esc()，否则 < > " 被转义后 regex 匹配失败）
-s = replaceRefs(s, (ref) => renderRefChip(ref));
+s = replaceRefs(s, (ref, seq) => renderRefChip(ref, seq));
 
 // 2) 原有 inline 流程（esc + markdown 元素 + auto-link + code）
 s = inline(s);
@@ -81,11 +80,17 @@ s = inline(s);
 ### 3.2 ref token pre-pass 实现
 
 ```ts
-function replaceRefs(src: string, render: (r: Ref) => string): string {
+function replaceRefs(
+  src: string,
+  render: (ref: Ref, seq: number, raw: string) => string,
+): string {
+  // seq：渲染时按出现顺序分配 chip 序号（1-based），用作 data-ref-id
+  let seq = 0;
   return src.replace(/\[\[ref\s+([\s\S]+?)\]\]/g, (_m, body) => {
     const ref = parseRefBody(body);
     if (!ref) return _m; // parse 失败 → 原样返回，落到 inline() 当纯文本
-    return render(ref);
+    seq++;
+    return render(ref, seq, _m);
   });
 }
 ```
@@ -99,13 +104,13 @@ function replaceRefs(src: string, render: (r: Ref) => string): string {
 type RefAttrs = Record<string, string>;
 
 interface Ref {
-  id: number;
+  // id 已移除（v5.1）：chip ↔ popover 配对改用 replaceRefs 分配的 seq
   type: string;            // 任意 string，未识别走 other
-  attrs: RefAttrs;         // 除 id / type 外的所有 key=value
+  attrs: RefAttrs;         // 除 type 外的所有 key=value（id 静默忽略）
 }
 
 function parseRefBody(body: string): Ref | null {
-  // 形态：id=1 type=link url="https://..." title="..."
+  // 形态：type=link url="https://..." title="..." content="..."
   // 拆 key=value：value 可以是 bare / "quoted" / 'quoted'
   const tokens = body.match(/(\w+)=("([^"]*)"|'([^']*)'|(\S+))/g);
   if (!tokens) return null;
@@ -115,19 +120,18 @@ function parseRefBody(body: string): Ref | null {
     if (!m) continue;
     map[m[1]] = m[2] ?? m[3] ?? m[4] ?? "";
   }
-  if (!("id" in map) || !("type" in map)) return null;
-  const id = Number(map.id);
-  if (!Number.isInteger(id) || id < 1) return null;
-  const type = map.type;
-  delete map.id;
+  if (!("type" in map)) return null;
   delete map.type;
-  return { id, type, attrs: map };
+  // 注：旧 token 含 id=N 时，id 字段已经在 map 里（但不进 attrs，不进 Ref），
+  // 保持兼容；如果想清理可在 delete map.id; 这里加。
+  return { type: map.type, attrs: map };
 }
 ```
 
 ### 3.4 Chip HTML
 
 ```html
+<!-- v5.1：data-ref-id 由 replaceRefs 分配（出现顺序，从 1 开始） -->
 <span class="ref-chip"
       data-ref-id="1"
       data-ref-type="link"
@@ -136,18 +140,22 @@ function parseRefBody(body: string): Ref | null {
   <span class="ref-num">Playwright Trace Viewer</span>
 </span>
 <div class="ref-popover" data-ref-id="1">
-  <!-- popover 内容按 type 渲染：link → URL section -->
-  <!-- memory → Key + Snippet section -->
-  <!-- snippet → From + Content section -->
-  <!-- tool → key-value 网格 -->
-  <!-- other → JSON dump -->
-  <!-- v5：不再包含 type badge section 和 Title section（chip 已展示） -->
+  <!-- v5.1 popover 结构：type 行 + content section -->
+  <!-- 顶部：.ref-type-badge（emoji + type label + 4 色胶囊） -->
+  <!-- 下方：.ref-pop-section 渲染 chip 没展示的字段（link→desc / memory→snippet / snippet→content / tool→kv 网格 / other→JSON dump） -->
+  <!-- URL section 已删除：url 在 <a href=...> 走原生跳转，popover 没必要重复 -->
 </div>
 ```
 
 **chip 文本 + emoji icon 详见** `spec/requirements/ref-chip-label-and-icon.md`（v5）。
 
 **popover 不在 chip 里嵌套**（避免 hover 边界闪烁）：跟 chip 同一个父容器，popover 默认 `display: none`，JS 监听 hover/focus 时显示。
+
+**点击 chip 跳转（v5.1）**：
+
+- Browser 模式：`chip` 包 `<a href="..." target="_blank" rel="noopener noreferrer">`，**不 preventDefault**，让 native click 触发新 tab 打开。`user-select: none`（CSS）已经阻止「选中态闪烁」。
+- Tauri 模式：webview 没 opener capability，`<a target="_blank">` 被 webkit2gtk 拦截。click handler 走 `@tauri-apps/plugin-shell` 的 `open(href)`，调系统默认浏览器打开。环境检测 `const isTauri = "__TAURI_INTERNALS__" in window;`。
+- spec 详见 `spec/requirements/ref-chip-external-open.md`。
 
 ### 3.5 Popover 触发
 

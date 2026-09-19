@@ -94,15 +94,11 @@ describe("replaceRefs + renderRefChip 集成", () => {
     expect(out).toContain('data-ref-id="1"');
     expect(out).toContain('data-ref-type="link"');
     expect(out).toContain('class="ref-popover"');
-    // v5.1 popover：含 type badge section（link 无 desc → 只有 type 行）
+    // v5.1.1: link 含 url 即展示 url section（即使无 desc，溯源信息仍可读）
     expect(out).toContain('class="ref-type-badge"');
     expect(out).toContain('class="ref-pop-section"');
-    // v5.1 不再含 URL display
-    expect(out).not.toContain('class="ref-url-display"');
-    // v5.1 popover 内部不含 url（url 走 <a> href 在 chip 里）
-    const popover = out.match(/<div class="ref-popover"[^>]*>([\s\S]*?)<\/div>/);
-    expect(popover).toBeTruthy();
-    expect(popover![1]).not.toContain("https://x.com");
+    expect(out).toContain('class="ref-url-display"');
+    expect(out).toContain("https://x.com");
     expect(out).not.toContain("[[ref");
   });
 
@@ -176,7 +172,7 @@ describe("replaceRefs + renderRefChip 集成", () => {
     expect(out).toContain('rel="noopener noreferrer"');
   });
 
-  it("19. link popover v5.1：type 行 + content section（desc），不含 URL", () => {
+  it("19. link popover v5.1.1：type 行 + desc section + url section（两个独立）", () => {
     const out = replaceRefs(
       `[[ref type=link url="https://github.com/foo/bar" title="X" desc="github 仓库介绍"]]`,
       renderRefChip,
@@ -185,14 +181,47 @@ describe("replaceRefs + renderRefChip 集成", () => {
     expect(out).toContain('class="ref-type-badge"');
     expect(out).toContain('class="ref-icon-emoji"');
     expect(out).toContain('>link<');
-    // content section
-    expect(out).toContain('class="ref-pop-section"');
+    // desc section
     expect(out).toContain('>Content<');
     expect(out).toContain("github 仓库介绍");
-    // 不含 URL section / favicon（v5.1 删了）
+    // url section
+    expect(out).toContain('class="ref-url-display"');
+    expect(out).toContain('class="ref-pop-favicon"');
+    expect(out).toContain(
+      `https://www.google.com/s2/favicons?domain=github.com&amp;sz=32`,
+    );
+    expect(out).toContain("github.com/foo/bar");
+  });
+
+  it("19b. link 无 desc 字段：popover 只展示 url section（v5.1.1 新增）", () => {
+    // LLM 不输出 content 时 url section 仍提供溯源信息（之前 v5.1 删了 url
+    // 导致空白 popover，现在恢复）
+    const out = replaceRefs(
+      `[[ref type=link url="https://x.com/article" title="某报道"]]`,
+      renderRefChip,
+    );
+    // type 行
+    expect(out).toContain('class="ref-type-badge"');
+    // url section（必须有）
+    expect(out).toContain('class="ref-url-display"');
+    expect(out).toContain('>URL<');
+    expect(out).toContain("https://x.com/article");
+    // 没有 desc section
+    expect(out).not.toContain('>Content<');
+  });
+
+  it("19c. link 既无 desc 也无 url：popover 只有 type 行（不渲染空 section）", () => {
+    // 极端 case：LLM 只 emit type + title
+    const out = replaceRefs(
+      `[[ref type=link title="某报道"]]`,
+      renderRefChip,
+    );
+    // type 行
+    expect(out).toContain('class="ref-type-badge"');
+    // 没有 url section（url 缺失）
     expect(out).not.toContain('class="ref-url-display"');
-    expect(out).not.toContain('class="ref-pop-favicon"');
-    expect(out).not.toContain("https://www.google.com/s2/favicons");
+    // 没有 desc section
+    expect(out).not.toContain('>Content<');
   });
 
   it("20. 非 link type chip 是 <span>（不走 click 跳转）", () => {

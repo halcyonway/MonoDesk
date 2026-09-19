@@ -126,11 +126,32 @@ function renderPopover(ref: Ref): string {
   let contentHtml = "";
   switch (ref.type) {
     case "link": {
-      // v5.1：只取 desc（不渲染 URL section）
+      // v5.1：desc (一句话摘要) + url (favicon + mono URL) 两个 section 独立渲染。
+      //   - desc section: desc 字段有值且不是 url 时渲染（Image 60：desc 是 url
+      //     时跳过避免字符级断行）
+      //   - url section: url 字段有值且 safeUrl 通过时渲染（chip 文本是 title，
+      //     url 是溯源信息 —— LLM 不输出 desc 时仍能看到 url）
       const descRaw = a.desc || "";
       const descIsUrl = /^(https?|mailto):/i.test(descRaw);
       const desc = !descRaw || descIsUrl ? "" : he(truncate(descRaw, 240));
-      if (desc) contentHtml = section("Content", desc);
+
+      const url = a.url ? (safeUrl(a.url) ?? "") : "";
+      const domain = a.url ? extractDomain(a.url) : "";
+      const favicon = domain ? getFaviconUrl(domain) : "";
+
+      if (desc) contentHtml += section("Content", desc);
+      if (url) {
+        const faviconHtml = favicon
+          ? `<img class="ref-pop-favicon" src="${he(favicon)}" alt="" loading="lazy" data-favicon-stage="google" data-favicon-domain="${he(domain)}" />`
+          : `<span class="ref-pop-favicon-fallback" aria-hidden="true">·</span>`;
+        contentHtml += section(
+          "URL",
+          `<div class="ref-url-display">` +
+            `<div class="ref-pop-favicon-wrap">${faviconHtml}</div>` +
+            `<span class="ref-url-text">${he(url)}</span>` +
+          `</div>`,
+        );
+      }
       break;
     }
     case "memory": {

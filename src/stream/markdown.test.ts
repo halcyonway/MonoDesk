@@ -65,12 +65,14 @@ describe("renderMarkdown ref token ([[ref ...]])", () => {
     expect(out).toContain('data-ref-id="1"');
     expect(out).toContain('data-ref-type="link"');
     expect(out).toContain('class="ref-popover"');
-    // v5.1 popover: type 行 + content section（link 无 desc → 只有 type 行）
+    // v5.1 popover: type 行 + content section（link 无 desc → 只有 url section）
     expect(out).toContain('class="ref-type-badge"');
     expect(out).toContain('class="ref-pop-section"');
-    // 不再含 URL section / favicon（v5.1 删了，URL 走 <a> native 跳转）
-    expect(out).not.toContain('class="ref-url-display"');
-    expect(out).not.toContain('class="ref-pop-favicon"');
+    // v5.1.1: link 含 url 即展示 url section（即使无 desc）—— 模型不输出
+    // desc 时仍能看到 url（溯源信息）。
+    expect(out).toContain('class="ref-url-display"');
+    expect(out).toContain('class="ref-pop-favicon"');
+    expect(out).toContain('https://x.com');
     // 无 Open 按钮：跳转走点击 chip 本身
     expect(out).not.toContain('class="ref-pop-open"');
     expect(out).not.toContain("[[ref");

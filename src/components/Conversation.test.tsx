@@ -612,16 +612,17 @@ describe("Conversation evidence chain ref chip + popover", () => {
     // v5.1: chip 含完整 title + emoji icon（shortLabel = a.title = "T"）
     expect(chip?.textContent).toContain("T");
     expect(chip?.textContent).toContain("🔗");
-    // v5.1 popover: type 行 + content section（desc 字段）
+    // v5.1.1 popover: type 行 + desc section + url section（两个独立）
     const typeBadge = popover?.querySelector(".ref-type-badge");
     expect(typeBadge).toBeTruthy();
     expect(typeBadge?.textContent).toContain("link");
     expect(typeBadge?.textContent).toContain("🔗");
+    // desc section
     expect(popover?.textContent).toContain("一句话摘要");
-    // URL 不再渲染在 popover（v5.1 删了，走 <a> native 跳转）
-    expect(popover?.textContent).not.toContain("https://x.com");
-    expect(popover?.querySelector(".ref-url-display")).toBeNull();
-    expect(popover?.querySelector(".ref-pop-favicon")).toBeNull();
+    // url section（v5.1 删了 v5.1.1 恢复 —— 模型不输出 desc 时仍能溯源）
+    expect(popover?.textContent).toContain("https://x.com");
+    expect(popover?.querySelector(".ref-url-display")).toBeTruthy();
+    expect(popover?.querySelector(".ref-pop-favicon")).toBeTruthy();
   });
 
   it("popover 初始 display 来自 CSS（默认 hidden，JS hover 才会 .visible）", () => {

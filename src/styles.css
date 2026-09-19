@@ -2418,6 +2418,40 @@ a.ref-chip:focus {
   margin-right: 2px;
 }
 
+/* URL section（link type：favicon + mono URL，跟 desc section 独立展示）
+   v5.1.1 恢复 —— commit 8054e8e 删了 URL section（当时以为不需要），但模型
+   不输出 desc 时 popover 空白。改：desc + url 两个 section 各自按字段在否渲染。 */
+.ref-url-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.ref-pop-favicon-wrap {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.ref-pop-favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+}
+.ref-pop-favicon-fallback {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-faint, #ccc);
+}
+.ref-url-text {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
 /* content/snippet 预览：灰底 + 左侧竖线 + 底部渐变截断 */
 .ref-content-preview {
   font-size: 12px;

@@ -308,3 +308,175 @@ describe("Conversation inline agent metrics (#70)", () => {
     expect(onInspectRun).toHaveBeenCalledWith("t_xyz");
   });
 });
+
+describe("Conversation ToolBlock error body", () => {
+  // tool child 助手：构造一个含 tool child 的 assistant msg。
+  // ToolBlock 不在 Conversation 测试范围内（之前没覆盖），
+  // 但 ToolBlock 渲染依赖 Conversation 的 MsgView → ChildView → ToolBlock 链路，
+  // 这里通过 Conversation 组件间接挂载，再 query DOM 验证。
+  type AssistantMsg = Extract<Msg, { role: "assistant" }>;
+  type ToolChild = Extract<AssistantMsg["children"][number], { kind: "tool" }>;
+  function toolMsg(args: {
+    name: string;
+    state: "running" | "done";
+    result?: ToolChild["result"];
+    latencyMs?: number;
+  }): Msg {
+    return {
+      id: "a-tool",
+      role: "assistant",
+      runId: "t_x",
+      children: [
+        {
+          id: "c-tool",
+          kind: "tool",
+          name: args.name,
+          args: "{}",
+          state: args.state,
+          result: args.result,
+          latencyMs: args.latencyMs,
+        } as ToolChild,
+      ],
+    };
+  }
+
+  it("ok + exit 0 shows exit line, no stdout / stderr / reason", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "ok", stdout: "", stderr: "",
+          exit_code: 0, truncated: false, budget_id: null,
+        }, latencyMs: 50 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit 0");
+    expect(container.querySelector("pre")?.textContent ?? "").not.toContain("anything");
+    expect(container.querySelector(".t-reason")).toBeFalsy();
+    expect(container.querySelector(".t-empty")).toBeFalsy();
+  });
+
+  it("ok + stdout shows stdout then exit 0", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "ok", stdout: "hello world", stderr: "",
+          exit_code: 0, truncated: false, budget_id: null,
+        }, latencyMs: 50 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelector("pre")?.textContent).toBe("hello world");
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit 0");
+  });
+
+  it("error + stderr shows stderr (red) + exit code, no reason line", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "error", stdout: "", stderr: "command failed",
+          exit_code: 1, truncated: false, budget_id: null,
+        }, latencyMs: 20 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const stderr = container.querySelector(".stderr");
+    expect(stderr?.textContent).toBe("command failed");
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit 1");
+    expect(container.querySelector(".t-reason")).toBeFalsy();
+  });
+
+  it("error + empty stderr just shows exit code (silent exit case)", () => {
+    // 典型 case：grep 无匹配 → exit_code=1 + stderr 空。不补任何 stderr 提示文字
+    // （silent exit 不是 error 含义），只显示 exit_code 让用户自行判断语义。
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "error", stdout: "", stderr: "",
+          exit_code: 1, truncated: false, budget_id: null,
+        }, latencyMs: 20 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit 1");
+    expect(container.querySelector(".stderr")).toBeFalsy();
+    expect(container.querySelector(".t-empty")).toBeFalsy();
+  });
+
+  it("error + stdout and stderr both present shows both + exit code", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "error", stdout: "partial out", stderr: "err text",
+          exit_code: 2, truncated: false, budget_id: null,
+        }, latencyMs: 20 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelector("pre")?.textContent).toBe("partial out");
+    expect(container.querySelector(".stderr")?.textContent).toBe("err text");
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit 2");
+  });
+
+  it("timeout shows 'timeout after Xs' reason + stderr + exit 124", () => {
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "timeout", stdout: "", stderr: "killed",
+          exit_code: 124, truncated: false, budget_id: null,
+        }, latencyMs: 30020 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    const reason = container.querySelector(".t-reason");
+    expect(reason?.textContent).toMatch(/timeout after \d+\.\d{2}s/);
+    expect(reason?.textContent).toContain("30.02");
+    expect(container.querySelector(".stderr")?.textContent).toBe("killed");
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit 124");
+  });
+
+  it("cancelled shows 'cancelled by user' reason + stdout + exit -1, no stderr", () => {
+    // cancelled 不显示 stderr（避免误导用户以为是命令本身错）
+    const engine = makeEngine();
+    const { container } = render(
+      <Conversation
+        sessionKey={TEST_SESSION_KEY}
+        msgs={[userMsg, toolMsg({ name: "bash", state: "done", result: {
+          call_id: "c1", status: "cancelled", stdout: "partial", stderr: "should not show",
+          exit_code: -1, truncated: false, budget_id: null,
+        }, latencyMs: 50 })]}
+        engine={engine}
+        onSend={() => {}}
+        onInspectRun={() => {}}
+      />
+    );
+    expect(container.querySelector(".t-reason")?.textContent).toBe("cancelled by user");
+    expect(container.querySelector("pre")?.textContent).toBe("partial");
+    expect(container.querySelector(".stderr")).toBeFalsy();
+    expect(container.querySelector(".t-exit")?.textContent).toBe("exit -1");
+  });
+});
